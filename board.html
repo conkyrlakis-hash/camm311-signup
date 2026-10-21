@@ -33,7 +33,7 @@
   .empty { color: var(--muted); font-size: 16px; }
   footer { padding: 0 28px 12px; color: var(--muted); font-size: 13px; display: flex; gap: 16px; }
   footer button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } header { flex-wrap: wrap; } }
+  @media (max-width: 900px) { html, body { height: auto; } body { display: block; } main { grid-template-columns: 1fr; } .cloud { overflow: visible; } header { flex-wrap: wrap; } }
   @media (prefers-reduced-motion: reduce) { .w { transition: none; } }
 </style>
 </head>
@@ -61,7 +61,7 @@
   var HKEY = 'hidden:' + SESSION, hidden = {};
   try { hidden = JSON.parse(localStorage.getItem(HKEY) || '{}'); } catch (e) { hidden = {}; }
   var seen = {}, first = true;
-  function norm(s) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim(); }
+  function norm(s) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, '').trim(); }
   function saveHidden() { try { localStorage.setItem(HKEY, JSON.stringify(hidden)); } catch (e) {} var n = Object.keys(hidden).length; var b = document.getElementById('unhide'); b.hidden = !n; b.textContent = 'Show hidden (' + n + ')'; }
   document.getElementById('unhide').addEventListener('click', function () { hidden = {}; saveHidden(); render(lastRows); });
   var lastRows = [];
