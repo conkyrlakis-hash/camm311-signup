@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>CAMM 311 Course Material</title>
+<style>
+  :root { --bg:#f4f6f9; --card:#ffffff; --ink:#14202e; --muted:#5a6675; --line:#d6dde6; --navy:#0f2a47; --accent:#b8862d; --ok:#1d7a46; --err:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d151f; --card:#152230; --ink:#e8eef5; --muted:#9fb0c2; --line:#2b3c50; --navy:#cfe0f2; --accent:#d9a648; --ok:#4cc38a; --err:#ff8a7a; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font: 16px/1.5 "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 28px 18px 40px; }
+  .course { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  h1 { font-size: 24px; line-height: 1.25; margin: 6px 0 4px; color: var(--navy); }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 15px; }
+  form { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 16px; }
+  label { display: grid; gap: 6px; font-weight: 600; font-size: 15px; }
+  .en { font-weight: 400; color: var(--muted); font-size: 13px; }
+  input[type=text], input[type=email] { font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); width: 100%; }
+  input:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+  legend { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .opt { display: flex; gap: 10px; align-items: center; font-weight: 400; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .consent { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; font-size: 14px; color: var(--muted); }
+  .consent input { margin-top: 4px; }
+  button { font: inherit; font-weight: 600; padding: 14px; border: 0; border-radius: 8px; background: var(--navy); color: var(--card); cursor: pointer; }
+  button[disabled] { opacity: .6; cursor: wait; }
+  .msg { padding: 14px; border-radius: 8px; font-size: 15px; }
+  .msg.ok { border: 1px solid var(--ok); color: var(--ok); }
+  .msg.err { border: 1px solid var(--err); color: var(--err); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="course">CAMM 311 · Kitchen Management</div>
+  <h1>Εγγραφή για το υλικό του μαθήματος</h1>
+  <p class="sub">Συμπληρώστε τα στοιχεία σας και θα λάβετε όλο το υλικό με email.<br><span class="en">Fill in your details and you will receive all the course material by email.</span></p>
+
+  <form id="f" novalidate>
+    <label for="first_name">Όνομα <span class="en">First name</span>
+      <input id="first_name" name="first_name" type="text" autocomplete="given-name" maxlength="80" required>
+    </label>
+    <label for="surname">Επώνυμο <span class="en">Surname</span>
+      <input id="surname" name="surname" type="text" autocomplete="family-name" maxlength="80" required>
+    </label>
+    <label for="email">Email
+      <input id="email" name="email" type="email" autocomplete="email" maxlength="200" inputmode="email" required>
+    </label>
+    <fieldset>
+      <legend>Τμήμα <span class="en">Class</span></legend>
+      <label class="opt" for="s1"><input id="s1" type="radio" name="section" value="CAMM 311.1 (GR)" required> CAMM 311.1 · Ελληνικά</label>
+      <label class="opt" for="s2"><input id="s2" type="radio" name="section" value="CAMM 311.2 (EN)"> CAMM 311.2 · English</label>
+    </fieldset>
+    <label class="consent" for="consent"><input id="consent" type="checkbox" required>
+      <span>Συμφωνώ τα στοιχεία μου να χρησιμοποιηθούν μόνο για την αποστολή υλικού αυτού του μαθήματος. Διαγράφονται στο τέλος του εξαμήνου.<br><span class="en">I agree my details are used only to send me material for this course. They are deleted at the end of the semester.</span></span>
+    </label>
+    <button id="go" type="submit">Αποστολή · Submit</button>
+    <div id="out" class="msg" hidden></div>
+  </form>
+  <footer>Lecturer: Constantinos Kyrlakis</footer>
+</main>
+<script>
+(function () {
+  var URL_ = 'https://cgiibcoeezlmehzowidg.supabase.co/rest/v1/cut_camm311_signups';
+  var KEY = 'sb_publishable_kpJdz2KQoJU0t8vAYCE_4w_qr4HB0R1';
+  var f = document.getElementById('f'), out = document.getElementById('out'), go = document.getElementById('go');
+  function show(ok, text) { out.hidden = false; out.className = 'msg ' + (ok ? 'ok' : 'err'); out.textContent = text; }
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var fn = f.first_name.value.trim(), sn = f.surname.value.trim(), em = f.email.value.trim();
+    var sec = (f.querySelector('input[name=section]:checked') || {}).value;
+    if (!fn || !sn) return show(false, 'Συμπληρώστε όνομα και επώνυμο. / Please fill in your first name and surname.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return show(false, 'Ελέγξτε το email σας. / Please check your email address.');
+    if (!sec) return show(false, 'Επιλέξτε τμήμα. / Please choose your class.');
+    if (!document.getElementById('consent').checked) return show(false, 'Χρειάζεται η συγκατάθεσή σας. / Please tick the consent box.');
+    go.disabled = true;
+    fetch(URL_, { method: 'POST', headers: { 'apikey': KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ first_name: fn, surname: sn, email: em, section: sec, consent: true }) })
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        f.querySelectorAll('input, button').forEach(function (el) { el.disabled = true; });
+        show(true, 'Ευχαριστούμε! Θα λάβετε το υλικό απόψε στο ' + em + '. / Thank you! You will receive the material tonight at ' + em + '.');
+      })
+      .catch(function () { go.disabled = false; show(false, 'Δεν στάλθηκε. Δοκιμάστε ξανά. / Not sent. Please try again.'); });
+  });
+})();
+</script>
+</body>
+</html>
