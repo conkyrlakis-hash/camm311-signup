@@ -1,6 +1,6 @@
 /* CAMM 311 Study - service worker.
    Shell: cache-first. content_*.json: stale-while-revalidate. Cross-origin (Supabase) is never touched. */
-const VERSION = 'camm311-study-v2';
+const VERSION = 'camm311-study-v3';
 const PREFIX = 'camm311-study-';
 
 const SHELL = [

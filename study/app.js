@@ -9,12 +9,17 @@
   const MIDTERM_UTC = Date.UTC(2026, 10, 4); // 4 November 2026
   const SAVE_DELAY = 3000;
   const PULL_EVERY = 60000;
+  const TICK_MS = 5000;          // study-time timer tick
+  const IDLE_LIMIT = 180000;     // no activity for 3 minutes: stop counting
+  const TIME_SAVE_EVERY = 60;    // counted seconds between saves
+  const TIME_CAP = 10000000;
   const K = {
     session: 'camm311.session',
     lang: 'camm311.lang',
     prefs: 'camm311.prefs',
     prog: 'camm311.progress.',
-    ios: 'camm311.iosHintHidden'
+    ios: 'camm311.iosHintHidden',
+    device: 'camm311.device'
   };
   const ROUTES = ['home', 'study', 'study/run', 'quiz', 'quiz/run'];
   const PARENT = { 'study': 'home', 'study/run': 'study', 'quiz': 'home', 'quiz/run': 'quiz' };
@@ -29,6 +34,7 @@
       university: 'Cyprus University of Technology',
       footer: 'CAMM 311.2 · Kitchen Management · Cyprus University of Technology',
       privacy: 'Your email is used only to keep your study progress. Data deleted at the end of the semester.',
+      timeNotice: 'This app saves your answers and your study time per language. Your lecturer can see them. They are deleted at the end of the semester.',
       midterm: 'Midterm: Wednesday 4 November 2026, Lectures 1-6',
       daysLeft: '{n} days left',
       dayLeft: '1 day left',
@@ -119,6 +125,7 @@
       university: 'Τεχνολογικό Πανεπιστήμιο Κύπρου',
       footer: 'CAMM 311.1 · Διοίκηση Κουζίνας · Τεχνολογικό Πανεπιστήμιο Κύπρου',
       privacy: 'Το email σας χρησιμοποιείται μόνο για την αποθήκευση της προόδου σας. Τα δεδομένα διαγράφονται στο τέλος του εξαμήνου.',
+      timeNotice: 'Η εφαρμογή αποθηκεύει τις απαντήσεις σας και τον χρόνο μελέτης ανά γλώσσα. Τα βλέπει ο διδάσκων. Διαγράφονται στο τέλος του εξαμήνου.',
       midterm: 'Ενδιάμεση εξέταση: Τετάρτη 4 Νοεμβρίου 2026, Διαλέξεις 1-6',
       daysLeft: '{n} ημέρες ακόμα',
       dayLeft: '1 ημέρα ακόμα',
@@ -317,13 +324,31 @@
   }
 
   /* ---------- progress model and merge ---------- */
-  function blank() { return { v: 1, cards: {}, mcq: {} }; }
+  function blank() { return { v: 1, cards: {}, mcq: {}, time: {} }; }
 
   function validEntry(e) {
     return Array.isArray(e) && e.length >= 2 && (e[0] === 0 || e[0] === 1) && typeof e[1] === 'number' && isFinite(e[1])
       ? [e[0], e[1]] : null;
   }
   const sameEntry = (a, b) => !!a && !!b && a[0] === b[0] && a[1] === b[1];
+
+  // study time: { deviceId: { en: seconds, gr: seconds } }. Keeps only valid keys and numbers.
+  function cleanTime(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+    Object.keys(raw).forEach((dev) => {
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(dev) || dev === '__proto__') return;
+      const d = raw[dev];
+      if (!d || typeof d !== 'object' || Array.isArray(d)) return;
+      const o = {};
+      ['en', 'gr'].forEach((lg) => {
+        const n = d[lg];
+        if (typeof n === 'number' && isFinite(n) && n >= 0) o[lg] = Math.min(TIME_CAP, Math.floor(n));
+      });
+      if ('en' in o || 'gr' in o) out[dev] = o;
+    });
+    return out;
+  }
 
   // newest timestamp wins per id. diffLocal: local changed; diffRemote: server is behind
   function mergeProgress(local, remote) {
@@ -347,7 +372,115 @@
         if (!sameEntry(win, y)) diffRemote = true;
       });
     });
+    // study time: per device and language, the larger value wins
+    const ta = cleanTime(local && local.time);
+    const tb = cleanTime(remote && remote.time);
+    const devs = {};
+    Object.keys(ta).forEach((d) => { devs[d] = 1; });
+    Object.keys(tb).forEach((d) => { devs[d] = 1; });
+    Object.keys(devs).forEach((d) => {
+      ['en', 'gr'].forEach((lg) => {
+        const x = ta[d] ? ta[d][lg] : undefined;
+        const y = tb[d] ? tb[d][lg] : undefined;
+        if (x === undefined && y === undefined) return;
+        const win = Math.max(x === undefined ? 0 : x, y === undefined ? 0 : y);
+        if (!out.time[d]) out.time[d] = {};
+        out.time[d][lg] = win;
+        if (win !== x) diffLocal = true;
+        if (win !== y) diffRemote = true;
+      });
+    });
     return { data: out, diffLocal, diffRemote };
+  }
+
+  /* ---------- study timer (counts active seconds per language, never throws) ---------- */
+  const T = { last: 0, act: 0, rem: 0, counted: 0, unsaved: 0, dev: '', id: 0, dead: false };
+
+  function deviceId() {
+    if (T.dev) return T.dev;
+    let id = lsGet(K.device);
+    if (!id || !/^[A-Za-z0-9_-]{4,40}$/.test(id)) {
+      id = '';
+      try {
+        const a = new Uint8Array(6);
+        crypto.getRandomValues(a);
+        a.forEach((b) => { id += (b % 36).toString(36); });
+      } catch (e) { /* fall back below */ }
+      if (id.length < 6) id = Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-3);
+      lsSet(K.device, id);
+    }
+    T.dev = id;
+    return id;
+  }
+
+  function timerReset() {
+    T.last = Date.now();
+    T.act = T.last;
+    T.rem = 0;
+    T.counted = 0;
+    T.unsaved = 0;
+  }
+
+  // adds the time since the last tick to the current language; never throws
+  function timerCommit(anyVisibility) {
+    if (T.dead) return;
+    try {
+      const now = Date.now();
+      const last = T.last;
+      T.last = now;
+      if (!last || !S.session) return;
+      if (!anyVisibility && document.visibilityState !== 'visible') return;
+      if (now - T.act > IDLE_LIMIT) return;
+      let el = now - last;
+      if (!(el > 0)) return;
+      if (el > 2 * TICK_MS) el = 2 * TICK_MS;
+      T.rem += el / 1000;
+      const whole = Math.floor(T.rem);
+      if (whole < 1) return;
+      T.rem -= whole;
+      const lg = normLang(S.lang);
+      const dev = deviceId();
+      if (!S.progress.time || typeof S.progress.time !== 'object') S.progress.time = {};
+      const d = S.progress.time[dev] || (S.progress.time[dev] = {});
+      d[lg] = Math.min(TIME_CAP, (typeof d[lg] === 'number' && isFinite(d[lg]) ? d[lg] : 0) + whole);
+      T.counted += whole;
+      T.unsaved += whole;
+      if (T.counted >= TIME_SAVE_EVERY) {
+        T.counted = 0;
+        T.unsaved = 0;
+        touched();
+      }
+    } catch (e) {
+      T.dead = true;
+      clearInterval(T.id);
+    }
+  }
+
+  // before a flush or sign-out: commit, then mark dirty and persist so the last seconds are sent
+  function timerFlush() {
+    if (T.dead) return;
+    try {
+      timerCommit(true);
+      if (T.unsaved > 0 && S.session) {
+        T.unsaved = 0;
+        S.version++;
+        S.dirty = true;
+        persistProgress();
+      }
+    } catch (e) {
+      T.dead = true;
+      clearInterval(T.id);
+    }
+  }
+
+  function timerStart() {
+    try {
+      const act = () => { T.act = Date.now(); };
+      ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, act, { passive: true }));
+      document.addEventListener('scroll', act, { passive: true, capture: true });
+      timerReset();
+      T.id = setInterval(() => timerCommit(false), TICK_MS);
+    } catch (e) { T.dead = true; }
   }
 
   function loadLocalProgress(email) {
@@ -422,7 +555,7 @@
       if (!S.session || S.session.email !== email) return;
       S.lastPull = Date.now();
       if (!remote || typeof remote !== 'object') {
-        if (Object.keys(S.progress.cards).length || Object.keys(S.progress.mcq).length) { S.dirty = true; scheduleSave(); }
+        if (Object.keys(S.progress.cards).length || Object.keys(S.progress.mcq).length || Object.keys(S.progress.time || {}).length) { S.dirty = true; scheduleSave(); }
         return;
       }
       const m = mergeProgress(S.progress, remote);
@@ -616,6 +749,7 @@
 
   function setLang(code) {
     if (code === S.lang) return;
+    timerCommit(false); // time so far belongs to the old language
     S.lang = code;
     lsSet(K.lang, code);
     render({ keep: true });
@@ -812,7 +946,8 @@
     return h('div', { class: 'page' },
       form,
       h('p', { class: 'after' }, t('notYet') + ' ', h('a', { class: 'link', href: '../' }, t('signUpLink'))),
-      h('div', { 'data-install': '' }));
+      h('div', { 'data-install': '' }),
+      h('p', { class: 'after' }, t('timeNotice')));
   }
 
   function startSession(email, lang) {
@@ -821,6 +956,7 @@
     S.lang = lang;
     lsSet(K.lang, lang);
     S.progress = loadLocalProgress(email);
+    timerReset();
     S.study = null;
     S.quiz = null;
     S.depth = 0;
@@ -830,6 +966,7 @@
   }
 
   async function signOut() {
+    timerFlush();
     if (S.dirty) {
       try { await Promise.race([pushSave(false), new Promise((res) => setTimeout(res, 4000))]); } catch (e) { /* ignore */ }
     }
@@ -879,7 +1016,8 @@
         bigBtn('accent', t('practiceQuiz'), t('quizSub'), () => navigate('quiz'))),
       install,
       h('h2', { class: 'label' }, t('progress')),
-      h('div', { class: 'plist' }, progressRow(c, 0), c.lectures.map((n) => progressRow(c, n))));
+      h('div', { class: 'plist' }, progressRow(c, 0), c.lectures.map((n) => progressRow(c, n))),
+      h('p', { class: 'after' }, t('timeNotice')));
   }
 
   /* --- shared setup controls --- */
@@ -1254,10 +1392,14 @@
     document.addEventListener('keydown', onKey);
     document.addEventListener('click', (e) => { if (!e.target.closest('.menuwrap')) closeMenu(); });
     window.addEventListener('online', () => { if (S.dirty) pushSave(false); pullProgress(); });
-    const flush = () => { clearTimeout(S.saveTimer); pushSave(true); };
+    const flush = () => { timerFlush(); clearTimeout(S.saveTimer); pushSave(true); };
+    timerStart();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flush();
-      else if (S.session && Date.now() - S.lastPull > PULL_EVERY) pullProgress();
+      else {
+        timerReset(); // hidden time is never counted
+        if (S.session && Date.now() - S.lastPull > PULL_EVERY) pullProgress();
+      }
     });
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.deferred = e; refreshInstall(); });
