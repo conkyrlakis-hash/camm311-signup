@@ -33,7 +33,7 @@
       programme: 'Culinary Arts · Year 3',
       university: 'Cyprus University of Technology',
       footer: 'CAMM 311.2 · Kitchen Management · Cyprus University of Technology',
-      privacy: 'Your email is used only to keep your study progress. Data deleted at the end of the semester.',
+      privacy: 'Your email is used only to keep your study progress and study time. Data deleted at the end of the semester.',
       timeNotice: 'This app saves your answers and your study time per language. Your lecturer can see them. They are deleted at the end of the semester.',
       midterm: 'Midterm: Wednesday 4 November 2026, Lectures 1-6',
       daysLeft: '{n} days left',
@@ -124,7 +124,7 @@
       programme: 'Μαγειρικές Τέχνες · Έτος 3',
       university: 'Τεχνολογικό Πανεπιστήμιο Κύπρου',
       footer: 'CAMM 311.1 · Διοίκηση Κουζίνας · Τεχνολογικό Πανεπιστήμιο Κύπρου',
-      privacy: 'Το email σας χρησιμοποιείται μόνο για την αποθήκευση της προόδου σας. Τα δεδομένα διαγράφονται στο τέλος του εξαμήνου.',
+      privacy: 'Το email σας χρησιμοποιείται μόνο για την αποθήκευση της προόδου και του χρόνου μελέτης σας. Τα δεδομένα διαγράφονται στο τέλος του εξαμήνου.',
       timeNotice: 'Η εφαρμογή αποθηκεύει τις απαντήσεις σας και τον χρόνο μελέτης ανά γλώσσα. Τα βλέπει ο διδάσκων. Διαγράφονται στο τέλος του εξαμήνου.',
       midterm: 'Ενδιάμεση εξέταση: Τετάρτη 4 Νοεμβρίου 2026, Διαλέξεις 1-6',
       daysLeft: '{n} ημέρες ακόμα',
@@ -337,7 +337,7 @@
     const out = {};
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
     Object.keys(raw).forEach((dev) => {
-      if (!/^[A-Za-z0-9_-]{1,40}$/.test(dev) || dev === '__proto__') return;
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(dev) || dev in {}) return; // also refuses constructor, __proto__ etc.
       const d = raw[dev];
       if (!d || typeof d !== 'object' || Array.isArray(d)) return;
       const o = {};
