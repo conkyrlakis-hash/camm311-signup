@@ -15,14 +15,71 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="app.css">
+<style>
+  :root {
+    --navy: #1b365d; --blue: #007fa3; --red: #a61a2f;
+    --bg: #f4f6f9; --card: #ffffff; --text: #14233a; --muted: #4a5a70; --line: #dbe2ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #091829; --card: #10233b; --text: #e8eef5; --muted: #a9b8c9; --line: #22395a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    line-height: 1.55; -webkit-text-size-adjust: 100%;
+  }
+  .top {
+    background: var(--navy); color: #fff;
+    padding: calc(14px + env(safe-area-inset-top)) 16px 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .top img { height: 34px; width: auto; display: block; }
+  .top .name { font-weight: 600; font-size: 15px; line-height: 1.3; }
+  .top .name span { display: block; font-weight: 400; opacity: .8; font-size: 13px; }
+  .bar { height: 4px; background: linear-gradient(90deg, var(--blue) 0 70%, var(--red) 70% 100%); }
+  main { max-width: 560px; margin: 0 auto; padding: 28px 16px 40px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 22px 20px; margin-bottom: 16px;
+    border-left: 4px solid var(--blue);
+  }
+  h1 { font-size: 21px; line-height: 1.3; margin: 0 0 10px; font-weight: 600; }
+  p { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 15px; }
+  footer { max-width: 560px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13px; text-align: center; }
+</style>
 </head>
 <body>
-<header id="top" class="top"></header>
-<main id="main" class="wrap" tabindex="-1"><p class="status">&hellip;</p></main>
-<footer class="foot wrap" id="foot"></footer>
-<div id="live" class="sr" role="status" aria-live="polite"></div>
-<noscript>This study app needs JavaScript. / Η εφαρμογή χρειάζεται JavaScript.</noscript>
-<script src="app.js" defer></script>
+<header class="top">
+  <img src="img/cut_logo_white.png" alt="Cyprus University of Technology">
+  <div class="name">CAMM 311 Kitchen Management<span>Διοίκηση Κουζίνας</span></div>
+</header>
+<div class="bar"></div>
+
+<main>
+  <section class="card" lang="en">
+    <h1>The study app is closed for now</h1>
+    <p>It will be back for the final exam recap.</p>
+    <p class="muted">You will sign in with the same e-mail as before.</p>
+  </section>
+
+  <section class="card" lang="el">
+    <h1>Η εφαρμογή μελέτης είναι προσωρινά κλειστή</h1>
+    <p>Θα επιστρέψει για την επανάληψη πριν από την τελική εξέταση.</p>
+    <p class="muted">Θα συνδεθείτε με το ίδιο email όπως πριν.</p>
+  </section>
+</main>
+
+<footer>Cyprus University of Technology &middot; Τεχνολογικό Πανεπιστήμιο Κύπρου</footer>
+
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js', { scope: './' }).catch(function () {});
+    });
+  }
+</script>
 </body>
 </html>
