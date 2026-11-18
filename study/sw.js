@@ -2,7 +2,7 @@
    The study app is down until the final exam recap. This worker replaces the app's v2 worker on
    installed phones: it deletes the old app caches (app shell + content) and reloads any open app
    window so the notice shows on the first open. Pages: network-first, cached notice when offline. */
-const VERSION = 'camm311-study-closed-1';
+const VERSION = 'camm311-study-closed-2';
 const PREFIX = 'camm311-study-';
 
 const SHELL = [
@@ -25,14 +25,25 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil((async () => {
+  const done = (async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.indexOf(PREFIX) === 0 && k !== VERSION).map((k) => caches.delete(k)));
+    const old = keys.filter((k) => k.indexOf(PREFIX) === 0 && k !== VERSION);
+    await Promise.all(old.map((k) => caches.delete(k)));
     await self.clients.claim();
-    // an app window still showing the old study app: reload it into the notice
-    const wins = await self.clients.matchAll({ type: 'window' });
-    await Promise.all(wins.map((c) => c.navigate(c.url).catch(() => null)));
-  })());
+    return old.length > 0;
+  })();
+  event.waitUntil(done);
+  // A window still showing the OLD study app: reload it into the notice. This runs only after
+  // activation has finished: awaiting navigate() inside waitUntil deadlocks (the reload's fetch
+  // waits for activation, activation waits for the reload). First-time visitors are not reloaded.
+  done.then((hadOldApp) => {
+    if (!hadOldApp) return;
+    setTimeout(() => {
+      self.clients.matchAll({ type: 'window' })
+        .then((wins) => wins.forEach((c) => c.navigate(c.url).catch(() => null)))
+        .catch(() => null);
+    }, 50);
+  }).catch(() => null);
 });
 
 self.addEventListener('fetch', (event) => {
