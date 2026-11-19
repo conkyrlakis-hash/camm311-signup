@@ -5,7 +5,7 @@
 -- Seed = 5 DEMO questions. Real questions are loaded later by the owner's word.
 --
 -- ONE-TIME OWNER STEPS after applying (SQL editor, service role):
---   1. Set the lecturer code (min 8 characters). Until this runs, every lecturer RPC answers "not_set":
+--   1. Set the lecturer code (min 12 characters). Until this runs, every lecturer RPC answers "not_set":
 --        select public.cut_camm311_quiz_admin_set_lecturer(1, '<your lecturer code>');
 --      The seed holds a random hash nobody knows, so there is no usable default code.
 --      Later change from the board side: cut_camm311_quiz_lecturer_code_change(quiz, old, new).
@@ -120,6 +120,7 @@ declare a public.cut_camm311_quiz_attempts; qz public.cut_camm311_quiz; total in
 begin
   select * into a from public.cut_camm311_quiz_attempts where id = p_attempt;
   if not found then return false; end if;
+  if not a.approved then return false; end if;     -- a device waiting for approval is never swept; its clock starts at approval
   select * into qz from public.cut_camm311_quiz where id = a.quiz_id;
   total := array_length(a.q_order, 1);
   update public.cut_camm311_quiz_answers
@@ -139,32 +140,33 @@ begin
 end $$;
 
 -- lecturer code check. Returns 'ok' | 'forbidden' | 'rate_limited' | 'not_set'. Never raises, so the failure row COMMITS.
+-- The hash is checked FIRST: a right code always passes (no cap, no sleep), so guessers can never lock the lecturer out.
+-- Only wrong codes are counted, slowed (1 s) and, past 20 in 10 minutes per quiz, answered 'rate_limited' (board alert).
+-- The count-then-insert is not locked: two parallel wrong guesses may both slip under the cap. Accepted (the 1 s sleep and bcrypt dominate).
 create or replace function public.cut_camm311_quiz_lect_ok(p_quiz int, p_code text)
 returns text language plpgsql security definer set search_path = public, extensions, pg_temp as $$
 declare qz public.cut_camm311_quiz;
 begin
-  if (select count(*) from public.cut_camm311_quiz_fails where quiz_id = p_quiz and key = 'lect' and at > now() - interval '10 minutes') >= 20 then
-    return 'rate_limited';                        -- global cap per quiz: the board stops until the window passes
-  end if;
   select * into qz from public.cut_camm311_quiz where id = p_quiz;
-  if not found then
-    insert into public.cut_camm311_quiz_fails(key, quiz_id) values ('lect', p_quiz);
-    return 'forbidden';
+  if found and qz.lecturer_set and p_code is not null and qz.lecturer_hash = crypt(p_code, qz.lecturer_hash) then
+    return 'ok';
   end if;
-  if not qz.lecturer_set then return 'not_set'; end if;
-  if p_code is null or qz.lecturer_hash <> crypt(p_code, qz.lecturer_hash) then
-    insert into public.cut_camm311_quiz_fails(key, quiz_id) values ('lect', p_quiz);
+  if found and not qz.lecturer_set then return 'not_set'; end if;
+  delete from public.cut_camm311_quiz_fails where key = 'lect' and at < now() - interval '1 hour';
+  if (select count(*) from public.cut_camm311_quiz_fails where quiz_id = p_quiz and key = 'lect' and at > now() - interval '10 minutes') >= 20 then
     perform pg_sleep(1);
-    return 'forbidden';
+    return 'rate_limited';
   end if;
-  return 'ok';
+  insert into public.cut_camm311_quiz_fails(key, quiz_id) values ('lect', p_quiz);
+  perform pg_sleep(1);
+  return 'forbidden';
 end $$;
 
 -- ---------- owner-only (SQL editor): first lecturer code ----------
 create or replace function public.cut_camm311_quiz_admin_set_lecturer(p_quiz int, p_new text)
 returns void language plpgsql security definer set search_path = public, extensions, pg_temp as $$
 begin
-  if p_new is null or length(p_new) < 8 then raise exception 'code too short (min 8)'; end if;
+  if p_new is null or length(p_new) < 12 then raise exception 'code too short (min 12)'; end if;
   update public.cut_camm311_quiz set lecturer_hash = crypt(p_new, gen_salt('bf')), lecturer_set = true where id = p_quiz;
   if not found then raise exception 'no such quiz'; end if;
 end $$;
@@ -419,7 +421,7 @@ declare chk text;
 begin
   chk := public.cut_camm311_quiz_lect_ok(p_quiz, p_old);
   if chk <> 'ok' then return jsonb_build_object('error', chk); end if;
-  if p_new is null or length(p_new) < 8 then return jsonb_build_object('error', 'too_short'); end if;
+  if p_new is null or length(p_new) < 12 then return jsonb_build_object('error', 'too_short'); end if;
   update public.cut_camm311_quiz set lecturer_hash = crypt(p_new, gen_salt('bf')) where id = p_quiz;
   insert into public.cut_camm311_quiz_reset_log(quiz_id, action) values (p_quiz, 'lecturer_code_changed');
   return jsonb_build_object('ok', true);

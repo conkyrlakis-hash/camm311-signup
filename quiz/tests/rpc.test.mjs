@@ -42,7 +42,7 @@ for (const guess of ['DEMO-CODE-CHANGE-ME', 'demo', '']) {
 }
 ok(await throws(`select public.cut_camm311_quiz_admin_set_lecturer(1,'abcdefghij')`), 'admin_set_lecturer not callable by anon');
 await db.exec('reset role');
-ok(await throws(`select public.cut_camm311_quiz_admin_set_lecturer(1,'short')`), 'set code under 8 characters refused');
+ok(await throws(`select public.cut_camm311_quiz_admin_set_lecturer(1,'elevenchars')`), 'set code under 12 characters refused');
 await q(`select public.cut_camm311_quiz_admin_set_lecturer(1,$1)`, [LECT]);
 await db.exec('set role anon');
 ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).students !== undefined, 'owner-set lecturer code works');
@@ -71,10 +71,18 @@ for (const c of calls) { const r = await j(c); if (r.error !== 'forbidden') allE
 ok(allErr, 'board, room_regen, reset_device, approve, clear_blocks: wrong code returns {error:forbidden}, no exception');
 ok(Number((await su(`select count(*) c from cut_camm311_quiz_fails where key='lect'`))[0].c) === 5, 'five wrong lecturer codes left 5 committed rows');
 await sux(`insert into cut_camm311_quiz_fails(key,quiz_id) select 'lect',1 from generate_series(1,15)`);
-ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).error === 'rate_limited', 'cap of 20 wrong codes per quiz: even the right code is stopped');
-ok((await j(`select public.cut_camm311_quiz_clear_blocks(1,$1) r`, [LECT])).error === 'rate_limited', 'clear_blocks also stopped while capped');
-await sux(`update cut_camm311_quiz_fails set at = now() - interval '11 minutes'`);
-ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).students !== undefined, 'after the delay passes the board works again');
+ok((await j(`select public.cut_camm311_quiz_board(1,'bad') r`)).error === 'rate_limited', 'cap of 20 wrong codes per quiz: a wrong code now gets rate_limited');
+const bl = await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT]);
+ok(bl.students !== undefined && bl.alerts.lecturer_code_fails >= 20, 'the RIGHT code still passes during the block (no lock-out) and the board shows the wrong-code alert');
+const clr = await j(`select public.cut_camm311_quiz_clear_blocks(1,$1) r`, [LECT]);
+ok(clr.ok === true && clr.cleared >= 20, 'clear blocks is not circular: the right code clears it during the block');
+ok((await j(`select public.cut_camm311_quiz_board(1,'bad') r`)).error === 'forbidden', 'after clearing, a wrong code is forbidden again (not rate_limited)');
+await sux(`delete from cut_camm311_quiz_fails; insert into cut_camm311_quiz_fails(key,quiz_id,at) values ('lect',1,now()-interval '2 hours'),('room',1,now()-interval '2 hours'),('lect',1,now()-interval '30 minutes')`);
+await j(`select public.cut_camm311_quiz_board(1,'bad') r`);
+ok(Number((await su(`select count(*) c from cut_camm311_quiz_fails where key='lect' and at < now()-interval '1 hour'`))[0].c) === 0, 'old (>1 h) lect fail rows are purged in the lect path');
+const t0 = Date.now();
+const unk = await j(`select public.cut_camm311_quiz_board(999,'bad') r`);
+ok(unk.error === 'forbidden' && Date.now() - t0 >= 900, 'unknown quiz id: forbidden and slowed by the 1 s sleep');
 await sux(`delete from cut_camm311_quiz_fails`);
 
 // ---- room code, generic errors
@@ -187,8 +195,11 @@ ok((await j(`select public.cut_camm311_quiz_submit($1,$2,0,0) r`, [nik.attempt, 
 const bd3 = await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT]);
 ok(bd3.students.filter(s => s.pending).length === 2, 'board shows both as pending');
 ok((await j(`select public.cut_camm311_quiz_approve(1,'bad',null) r`)).error === 'forbidden', 'approve needs the lecturer code');
+await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '500 seconds' where id in ('${nik.attempt}','${zoe.attempt}')`);
+ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).students.filter(s => s.pending).length === 2, 'board sweep leaves unapproved attempts pending past the deadline');
+ok((await su(`select count(*) c from cut_camm311_quiz_answers where attempt_id in ('${nik.attempt}','${zoe.attempt}')`))[0].c == 0, 'unapproved attempts get no timeout rows');
 ok((await j(`select public.cut_camm311_quiz_approve(1,$1,$2) r`, [LECT, nik.attempt])).approved === 1, 'approve one student');
-ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [nik.attempt, nik.token])).done === false, 'after approval the token works');
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [nik.attempt, nik.token])).done === false, 'after waiting past the deadline unapproved, approval serves question 1 (clock starts at approval)');
 ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [zoe.attempt, zoe.token])).pending === true, 'the other stays pending');
 const ap2 = await j(`select public.cut_camm311_quiz_approve(1,$1,null) r`, [LECT]);
 ok(ap2.approved === 1 && (await j(`select public.cut_camm311_quiz_next($1,$2) r`, [zoe.attempt, zoe.token])).done === false, 'approve all');
