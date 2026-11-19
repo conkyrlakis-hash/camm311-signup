@@ -21,7 +21,7 @@ QS = [
     {'idx': 1, 'n': 5, 'stem_en': 'DEMO 2: Pick the second option.', 'stem_gr': 'DEMO 2: Επιλέξτε τη δεύτερη επιλογή.',
      'options': [{'en': 'Third', 'gr': 'Τρίτη'}, {'en': 'First', 'gr': 'Πρώτη'}, {'en': 'Second', 'gr': 'Δεύτερη'}], 'remaining_ms': 30000, 'done': False},
 ]
-state = {'i': 0, 'log': [], 'bodies': []}
+state = {'i': 0, 'log': [], 'bodies': [], 'pending': False, 'approved': False}
 
 def reply(route, obj, status=200):
     route.fulfill(status=status, content_type='application/json', body=json.dumps(obj),
@@ -32,25 +32,30 @@ def handler(route, req):
     body = req.post_data_json or {}
     state['log'].append(fn); state['bodies'].append(body)
     if req.method == 'OPTIONS': return route.fulfill(status=204, headers={'access-control-allow-origin': '*', 'access-control-allow-headers': '*'})
-    if fn == 'cut_camm311_quiz_info': return reply(route, {'quiz_id': 1, 'title': 'DEMO quiz', 'seconds': 30, 'n': 5, 'open': True})
+    if fn == 'cut_camm311_quiz_info': return reply(route, {'quiz_id': 1, 'title': 'DEMO quiz', 'seconds': 30, 'n': 5, 'open': True, 'started': 7})
     if fn == 'cut_camm311_quiz_start':
         if body['p_room'] != 'K7M2QX': return reply(route, {'error': 'cannot_start'})
-        return reply(route, {'attempt': 'a-1', 'token': 't-1', 'name': 'Anna Demo', 'section': 'CAMM 311.2 (EN)', 'n': 5, 'seconds': 30})
+        return reply(route, {'attempt': 'a-1', 'token': 't-1', 'name': 'Anna Demo', 'section': 'CAMM 311.2 (EN)', 'n': 5, 'seconds': 30, 'pending': state['pending']})
     if fn == 'cut_camm311_quiz_next':
+        if state['pending'] and not state['approved']: return reply(route, {'pending': True})
         if state['i'] >= len(QS): return reply(route, {'done': True, 'n': 5})
         return reply(route, QS[state['i']])
     if fn == 'cut_camm311_quiz_submit': state['i'] += 1; return reply(route, {'ok': True})
     if fn == 'cut_camm311_quiz_leave': state['i'] += 1; return reply(route, {'ok': True, 'locked': True})
     if fn == 'cut_camm311_quiz_board':
-        if body.get('p_code') != 'LECT': return reply(route, {'message': 'forbidden'}, 403)
-        def r(n, sec, ans, cor, left=0, dup=0, rp=False, fin=False, to=0):
-            return {'attempt': 'x' + n, 'name': n, 'section': sec, 'answered': ans, 'served': ans, 'n': 10, 'correct': cor, 'left': left,
-                    'timeouts': to, 'dup': dup, 'reset_pending': rp, 'finished': fin, 'seen_s_ago': 2}
-        return reply(route, {'title': 'DEMO quiz - not an exam', 'n': 10, 'room_set': True, 'students': [
+        if body.get('p_code') != 'LECT': return reply(route, {'error': 'forbidden'})
+        scores = bool(body.get('p_scores'))
+        def r(n, sec, ans, cor, left=0, dup=0, rp=False, fin=False, to=0, pend=False):
+            d = {'attempt': 'x' + n, 'name': n, 'section': sec, 'answered': ans, 'served': ans, 'n': 10, 'correct': cor, 'left': left,
+                    'timeouts': to, 'dup': dup, 'reset_pending': rp, 'finished': fin, 'seen_s_ago': 2, 'pending': pend}
+            if not scores: d.pop('correct')
+            return d
+        return reply(route, {'title': 'DEMO quiz - not an exam', 'n': 10, 'room_set': True, 'scores_visible': scores, 'alerts': {'room_guesses': 12, 'unknown_emails': 0, 'lecturer_code_fails': 0}, 'students': [
             r('Anna Demo', 'CAMM 311.2 (EN)', 4, 3), r('Elena Demo', 'CAMM 311.1 (GR)', 6, 4, left=2),
             r('Marios Demo', 'CAMM 311.1 (GR)', 10, 8, fin=True), r('Nikos Demo', 'CAMM 311.2 (EN)', 3, 2, dup=1),
-            r('Sofia Demo', 'CAMM 311.2 (EN)', 5, 3, rp=True), r('Petros Demo', 'CAMM 311.1 (GR)', 7, 5, to=1)]})
-    if fn == 'cut_camm311_quiz_room_regen': return reply(route, 'K7M2QX')
+            r('Sofia Demo', 'CAMM 311.2 (EN)', 5, 3, rp=True), r('Petros Demo', 'CAMM 311.1 (GR)', 7, 5, to=1), r('Vera Demo', 'CAMM 311.2 (EN)', 0, 0, pend=True)]})
+    if fn == 'cut_camm311_quiz_room_regen': return reply(route, {'room': 'K7M2QX'})
+    if fn in ('cut_camm311_quiz_approve', 'cut_camm311_quiz_clear_blocks'): return reply(route, {'ok': True, 'approved': 1, 'cleared': 12})
     if fn == 'cut_camm311_quiz_reset_device': return reply(route, {'ok': True})
     return reply(route, None)
 
@@ -82,6 +87,9 @@ with sync_playwright() as p:
     pg.screenshot(path=f'{SHOTS}/2_student_question_360_en.png')
     pg.locator('.opt').nth(1).click(); pg.wait_for_selector('#qstatus:has-text("saved")'); pg.wait_for_selector('.stem:has-text("DEMO 2")')
     check(state['log'].count('cut_camm311_quiz_submit') == 1 and state['bodies'][state['log'].index('cut_camm311_quiz_submit')]['p_pos'] == 1, 'tap sends position only')
+    # blur only logs: no lock, no leave call
+    pg.evaluate("window.dispatchEvent(new Event('blur'))"); pg.wait_for_timeout(300)
+    check(pg.locator('.locked').count() == 0 and 'cut_camm311_quiz_leave' not in state['log'], 'blur does not lock and sends no leave')
     # leave on question 2
     pg.evaluate(HIDE); pg.wait_for_selector('.locked')
     check('cut_camm311_quiz_leave' in state['log'], 'leaving the app reports leave to the server')
@@ -97,10 +105,41 @@ with sync_playwright() as p:
     pg = ctx.new_page(); pg.goto(BASE + 'board.html'); pg.fill('#lc', 'bad'); pg.click('button[type=submit]'); pg.wait_for_selector('.band.err')
     check(True, 'board: wrong lecturer code shows error')
     pg.fill('#lc', 'LECT'); pg.click('button[type=submit]'); pg.wait_for_selector('table.board')
-    pg.click('text=New room code'); pg.wait_for_function("document.getElementById('roomcode').textContent==='K7M2QX'")
-    check(pg.locator('tr.red').count() == 1 and pg.locator('tr.amber').count() == 2, 'board: 1 red row (left app), 2 amber rows (duplicate, reset waiting)')
+    check(pg.locator('#roomcode').count() == 0 and 'K7M2QX' not in pg.inner_text('main'), 'board: room code is NOT on the main board')
+    pg.click('#newroom'); pg.wait_for_function("localStorage.getItem('camm311_quiz_room')==='K7M2QX'")
+    check(pg.locator('th:has-text("Correct")').count() == 0 and pg.locator('td.num').count() == 0, 'board: scores hidden by default')
+    check(pg.locator('tr.red').count() == 1 and pg.locator('tr.amber').count() == 3, 'board: 1 red row (left app), 3 amber rows (duplicate, reset waiting, pending)')
+    check('Wrong room codes tried: 12' in pg.inner_text('#alerts') and pg.locator('#clearblocks').count() == 1, 'board: alert banner and clear blocks')
+    check(pg.locator('#approveall').count() == 1, 'board: approve all button while someone is pending')
+    pg.click('#approveall'); pg.wait_for_timeout(300)
+    check('cut_camm311_quiz_approve' in state['log'], 'board: approve calls the server')
+    pg.click('#clearblocks'); pg.wait_for_selector('.band.ok:has-text("12")')
+    pg.click('#scoretoggle'); pg.wait_for_selector('th:has-text("Correct")')
+    check(pg.locator('td.num').count() == 7, 'board: scores shown after the toggle')
+    pg.click('#scoretoggle'); pg.wait_for_function("document.querySelectorAll('td.num').length===0")
     check(pg.evaluate('document.documentElement.scrollWidth <= 1280'), 'board: fits 1280')
     pg.screenshot(path=f'{SHOTS}/4_lecturer_board_1280.png')
+    # ---------- projector: only code + count ----------
+    pj = ctx.new_page(); pj.goto(BASE + 'projector.html')
+    pj.evaluate("localStorage.setItem('camm311_quiz_room','K7M2QX')")
+    pj.wait_for_function("document.getElementById('code').textContent==='K7M2QX'")
+    txt = pj.inner_text('main')
+    check('K7M2QX' in txt and pj.inner_text('#count') == '7', 'projector: room code and started count')
+    check('Demo' not in txt and 'orrect' not in txt, 'projector: no names, no scores')
+    pj.set_viewport_size({'width': 1280, 'height': 720})
+    pj.screenshot(path=f'{SHOTS}/5_projector_1280.png')
+    pg.screenshot(path=f'{SHOTS}/4_lecturer_board_1280.png') if False else None
+    # ---------- student pending screen ----------
+    ctx2 = b.new_context(viewport={'width': 360, 'height': 740}, locale='en')
+    ctx2.route('**/rest/v1/rpc/**', handler)
+    state['pending'] = True; state['approved'] = False; state['i'] = 0
+    sp = ctx2.new_page(); sp.goto(BASE + 'index.html'); sp.wait_for_selector('#email')
+    sp.fill('#email', 'anna@test.example'); sp.fill('#room', 'K7M2QX'); sp.click('button[type=submit]')
+    sp.wait_for_selector('h1:has-text("Waiting for the lecturer")')
+    check(True, 'student: pending screen while not approved')
+    state['approved'] = True
+    sp.wait_for_selector('.opt', timeout=6000)
+    check(True, 'student: question appears by itself after approval')
     b.close()
 srv.shutdown()
 print('ALL OK' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)

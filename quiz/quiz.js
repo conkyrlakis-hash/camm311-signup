@@ -20,6 +20,7 @@
       sending: 'Saving...', saved: 'Answer saved.', timeUp: 'Time is up.',
       lockedT: 'Question locked', lockedB: 'You left the app during this question. It is locked and the lecturer can see it.',
       cont: 'Next question', doneT: 'Quiz finished', doneB: 'Your answers are saved. You can close this page.',
+      pendT: 'Waiting for the lecturer', pendB: 'Your device is waiting for approval. This page continues by itself.', closedT: 'Quiz closed', closedB: 'The quiz is closed. Unanswered questions count as wrong.',
       sendFail: 'Could not save. Tap your answer again.', session: 'Session ended. Start again.', as: 'Signed in as'
     },
     gr: {
@@ -36,6 +37,7 @@
       sending: 'Αποθήκευση...', saved: 'Η απάντηση αποθηκεύτηκε.', timeUp: 'Ο χρόνος τελείωσε.',
       lockedT: 'Η ερώτηση κλειδώθηκε', lockedB: 'Φύγατε από την εφαρμογή κατά τη διάρκεια της ερώτησης. Κλειδώθηκε και ο διδάσκων το βλέπει.',
       cont: 'Επόμενη ερώτηση', doneT: 'Το κουίζ ολοκληρώθηκε', doneB: 'Οι απαντήσεις σας αποθηκεύτηκαν. Μπορείτε να κλείσετε τη σελίδα.',
+      pendT: 'Αναμονή για τον διδάσκοντα', pendB: 'Η συσκευή σας περιμένει έγκριση. Η σελίδα συνεχίζει αυτόματα.', closedT: 'Το κουίζ έκλεισε', closedB: 'Το κουίζ έκλεισε. Οι αναπάντητες ερωτήσεις μετρούν ως λάθος.',
       sendFail: 'Αποτυχία αποθήκευσης. Πατήστε ξανά την απάντησή σας.', session: 'Η συνεδρία έληξε. Ξεκινήστε ξανά.', as: 'Συνδεδεμένος ως'
     }
   };
@@ -130,9 +132,15 @@
 
   function noQuizScreen() { show(el('div', { class: 'page' }, el('h1', {}, t('title')), el('div', { class: 'band' }, t('noQuiz')))); }
 
-  function doneScreen() {
-    stopTick(); setLeaveGuard(false);
-    show(el('div', { class: 'page' }, el('h1', {}, t('doneT')), el('div', { class: 'band ok' }, t('doneB'))));
+  function doneScreen(closed) {
+    stopTick(); setLeaveGuard(false); clearTimeout(S.graceTimer);
+    show(el('div', { class: 'page' }, el('h1', {}, t(closed ? 'closedT' : 'doneT')), el('div', { class: 'band ok' }, t(closed ? 'closedB' : 'doneB'))));
+  }
+
+  function pendingScreen() {
+    stopTick(); setLeaveGuard(false); clearTimeout(S.graceTimer);
+    show(el('div', { class: 'page' }, el('h1', {}, t('pendT')), el('div', { class: 'band' }, t('pendB'))));
+    S.graceTimer = setTimeout(loadNext, 2000);
   }
 
   function lockedScreen() {
@@ -206,7 +214,9 @@
     if (!S.sess) { route(); return; }
     var prev = S.q ? S.q.idx : (S.prevIdx != null ? S.prevIdx : -1);
     rpc('cut_camm311_quiz_next', { p_attempt: S.sess.attempt, p_token: S.sess.token }).then(function (q) {
-      if (q.done) { S.q = null; doneScreen(); }
+      if (q.error === 'closed' || q.closed) { S.q = null; doneScreen(true); }
+      else if (q.pending) { S.q = null; pendingScreen(); }
+      else if (q.done) { S.q = null; doneScreen(); }
       else if (q.idx === prev && q.remaining_ms <= 0) { S.graceTimer = setTimeout(loadNext, 1000); }
       else { setWatermark(S.sess.name); questionScreen(q); }
     }).catch(function (e) {
@@ -226,7 +236,7 @@
     lockedScreen();
   }
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') leave(); });
-  window.addEventListener('blur', leave);
+  var blurCount = 0; window.addEventListener('blur', function () { blurCount++; }); /* blur only counts; it never locks (visibilitychange and pagehide do) */
   window.addEventListener('pagehide', leave);
   document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
