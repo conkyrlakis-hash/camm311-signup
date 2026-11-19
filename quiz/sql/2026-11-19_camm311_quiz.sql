@@ -12,6 +12,8 @@
 --   2. Set the quiz settings (date window, number of questions) and switch it on:
 --        update public.cut_camm311_quiz set opens_at = '...', closes_at = '...', n_questions = N, active = true where id = 1;
 --      approve_devices (default true): a new start shows as pending; the token works only after the lecturer taps Approve.
+--   2b. Load the question bank: python quiz/tools/make_load_sql.py <bank.json> > load.sql, then run load.sql in the SQL editor.
+--       The bank text never goes into the repo.
 --   3. Open the board, press "New room code", open the projector view.
 -- Everything is one transaction: a failure leaves nothing behind.
 
@@ -26,7 +28,7 @@ create table if not exists public.cut_camm311_quiz (
   active        boolean     not null default false,      -- owner switches on
   opens_at      timestamptz,                             -- quiz date/window: NOT GIVEN YET (null = never open)
   closes_at     timestamptz,
-  n_questions   int         not null default 10 check (n_questions > 0),  -- NOT GIVEN YET
+  n_questions   int         not null default 30 check (n_questions > 0),  -- questions per attempt, drawn at random from the pool; the deadline follows it
   seconds       int         not null default 30 check (seconds between 5 and 600),
   grace_seconds int         not null default 3  check (grace_seconds between 0 and 15),
   slack_seconds int         not null default 10 check (slack_seconds between 0 and 120),  -- added to the whole-attempt deadline
@@ -44,8 +46,11 @@ create table if not exists public.cut_camm311_quiz_questions (
   stem_en     text not null,
   stem_gr     text not null,
   options     jsonb not null check (jsonb_typeof(options) = 'array' and jsonb_array_length(options) between 2 and 6),
-  correct_idx int  not null check (correct_idx >= 0)     -- index into options; server only
+  correct_idx int  not null check (correct_idx >= 0),    -- index into options; server only
+  lecture     smallint                                   -- lecture tag (reporting only, never sent to a student)
 );
+alter table public.cut_camm311_quiz_questions add column if not exists lecture smallint;
+alter table public.cut_camm311_quiz alter column n_questions set default 30;
 
 create table if not exists public.cut_camm311_quiz_attempts (
   id          uuid primary key default gen_random_uuid(),
@@ -171,6 +176,36 @@ begin
   if not found then raise exception 'no such quiz'; end if;
 end $$;
 
+
+-- ---------- owner-only (SQL editor): load the question bank ----------
+-- p_bank = jsonb array of {"stem_en","stem_gr","options":[{"en","gr"} x4],"correct_idx":0..3,"lecture":8}.
+-- Idempotent: replaces ALL questions of the quiz (demo included) with exactly this bank; running it twice gives the same pool.
+-- Refuses (raises) if any attempt exists for the quiz, unless p_force is true (then attempts and their answers are deleted first).
+-- Sets n_questions = least(p_n, bank size). Not callable by anon/authenticated.
+create or replace function public.cut_camm311_quiz_admin_load_bank(p_quiz int, p_bank jsonb, p_n int default 30, p_force boolean default false)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare e jsonb; n int := 0; na int; nq int;
+begin
+  if not exists (select 1 from public.cut_camm311_quiz where id = p_quiz) then raise exception 'no such quiz'; end if;
+  if p_bank is null or jsonb_typeof(p_bank) <> 'array' or jsonb_array_length(p_bank) < 1 then raise exception 'bank must be a non-empty json array'; end if;
+  for e in select * from jsonb_array_elements(p_bank) loop
+    n := n + 1;
+    if coalesce(e ->> 'stem_en', '') = '' or coalesce(e ->> 'stem_gr', '') = '' then raise exception 'question % has no stem', n; end if;
+    if jsonb_typeof(e -> 'options') <> 'array' or jsonb_array_length(e -> 'options') <> 4 then raise exception 'question % needs exactly 4 options', n; end if;
+    if (e ->> 'correct_idx') is null or (e ->> 'correct_idx')::int not between 0 and 3 then raise exception 'question % has a bad correct_idx', n; end if;
+  end loop;
+  select count(*) into na from public.cut_camm311_quiz_attempts where quiz_id = p_quiz;
+  if na > 0 and not coalesce(p_force, false) then raise exception 'refused: % attempts exist for this quiz (pass p_force = true to delete them)', na; end if;
+  delete from public.cut_camm311_quiz_attempts where quiz_id = p_quiz;      -- cascades to answers
+  delete from public.cut_camm311_quiz_questions where quiz_id = p_quiz;
+  insert into public.cut_camm311_quiz_questions(quiz_id, is_demo, stem_en, stem_gr, options, correct_idx, lecture)
+  select p_quiz, false, x ->> 'stem_en', x ->> 'stem_gr', x -> 'options', (x ->> 'correct_idx')::int, nullif(x ->> 'lecture', '')::smallint
+    from jsonb_array_elements(p_bank) x;
+  nq := least(greatest(coalesce(p_n, 30), 1), n);
+  update public.cut_camm311_quiz set n_questions = nq where id = p_quiz;
+  return jsonb_build_object('loaded', n, 'n_questions', nq, 'attempts_deleted', na);
+end $$;
+
 -- ---------- public RPCs ----------
 -- 0. which quiz is on (no questions, no answers). 'started' feeds the projector view.
 create or replace function public.cut_camm311_quiz_info()
@@ -185,7 +220,9 @@ returns jsonb language sql security definer set search_path = public, pg_temp as
          from public.cut_camm311_quiz q where q.active order by q.id desc limit 1), jsonb_build_object('quiz_id', null));
 $$;
 
--- 1. start. Order: quiz open? -> ROOM CODE -> email. Room-code guesses are counted per quiz (not per email), email failures only
+-- 1. start. Each NEW attempt gets n_questions drawn at random from the pool, in its own random order, stored in q_order
+--    (a lecturer device reset keeps the row, so the same set continues: q_order is never redrawn). Options are shuffled per question at serve time.
+--    Order: quiz open? -> ROOM CODE -> email. Room-code guesses are counted per quiz (not per email), email failures only
 --    when the room code was right, so nobody can lock a classmate out and a right code + real email is never blocked.
 --    One generic error for unknown email, wrong room code and closed quiz.
 create or replace function public.cut_camm311_quiz_start(p_email text, p_quiz int, p_room text)
@@ -428,7 +465,8 @@ begin
 end $$;
 
 revoke all on function public.cut_camm311_quiz_auth(uuid, uuid), public.cut_camm311_quiz_sweep(uuid),
-  public.cut_camm311_quiz_lect_ok(int, text), public.cut_camm311_quiz_admin_set_lecturer(int, text) from public, anon, authenticated;
+  public.cut_camm311_quiz_lect_ok(int, text), public.cut_camm311_quiz_admin_set_lecturer(int, text),
+  public.cut_camm311_quiz_admin_load_bank(int, jsonb, int, boolean) from public, anon, authenticated;
 revoke all on function public.cut_camm311_quiz_info(), public.cut_camm311_quiz_start(text, int, text),
   public.cut_camm311_quiz_next(uuid, uuid), public.cut_camm311_quiz_submit(uuid, uuid, int, int),
   public.cut_camm311_quiz_leave(uuid, uuid, int), public.cut_camm311_quiz_board(int, text, boolean),

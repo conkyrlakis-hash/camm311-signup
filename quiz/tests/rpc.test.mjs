@@ -215,6 +215,85 @@ for (let g = 1; g <= 12; g++) {
 }
 ok(orders.size > 1 && optorders.size > 3, `shuffles differ per student (${orders.size} first-question variants, ${optorders.size} option orders)`);
 
+// ---- question bank loader, 30-of-50 draw, per-attempt shuffles (synthetic bank, not exam content)
+const BANK = Array.from({ length: 50 }, (_, i) => {
+  const ci = i % 4, opts = [];
+  for (let k = 0; k < 4; k++) opts.push(k === ci ? { en: `Q${i} right`, gr: `Ε${i} σωστό` } : { en: `Q${i} wrong${k}`, gr: `Ε${i} λάθος${k}` });
+  return { stem_en: `Question ${i}`, stem_gr: `Ερώτηση ${i}`, options: opts, correct_idx: ci, lecture: 8 + (i % 3) };
+});
+const BJ = JSON.stringify(BANK);
+await db.exec('set role anon');
+ok(await throws(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb)`, [BJ]), 'loader not callable by anon');
+await db.exec('reset role');
+ok(await throws(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb)`, [BJ]), 'loader refuses while attempts exist (no force)');
+ok(Number((await q(`select count(*) c from cut_camm311_quiz_questions`))[0].c) === 5, 'refused load changed nothing (5 demo questions still there)');
+ok(await throws(`select public.cut_camm311_quiz_admin_load_bank(1, '[{"stem_en":"a","stem_gr":"b","options":[{"en":"x","gr":"x"}],"correct_idx":0}]'::jsonb, 30, true)`), 'loader refuses a question without 4 options');
+const ld = (await q(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb, 30, true) r`, [BJ]))[0].r;
+ok(ld.loaded === 50 && ld.n_questions === 30 && ld.attempts_deleted > 0, 'forced load: 50 questions, n_questions 30, old attempts removed');
+const ld2 = (await q(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb) r`, [BJ]))[0].r;
+ok(ld2.loaded === 50 && ld2.attempts_deleted === 0 && Number((await q(`select count(*) c from cut_camm311_quiz_questions`))[0].c) === 50, 'loader is idempotent: second run leaves exactly 50, no demo left');
+ok(Number((await q(`select count(distinct lecture) c from cut_camm311_quiz_questions`))[0].c) === 3, 'lecture tag stored');
+ok(Number((await q(`select count(*) c from cut_camm311_quiz_questions where is_demo`))[0].c) === 0, 'loaded questions are not demo');
+await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false`);
+await db.exec('set role anon');
+const defN = (await su(`select column_default d from information_schema.columns where table_name='cut_camm311_quiz' and column_name='n_questions'`))[0].d;
+ok(String(defN) === '30', 'n_questions default is 30');
+ok((await j(`select public.cut_camm311_quiz_info() r`)).n === 30, 'info reports 30 per quiz');
+const sets = [], ords = [], firsts = new Set(), att = [];
+for (let g = 1; g <= 8; g++) {
+  const s = await j(`select public.cut_camm311_quiz_start('s'||$1||'@test.example',1,$2) r`, [g, ROOMX]);
+  ok(s.n === 30, `student ${g}: 30 questions`);
+  att.push(s);
+  const qo = (await su(`select q_order o from cut_camm311_quiz_attempts where id=$1`, [s.attempt]))[0].o;
+  sets.push(qo.slice().sort((a, b) => a - b).join()); ords.push(qo.join()); firsts.add(qo[0]);
+  ok(new Set(qo).size === 30 && qo.every(x => x >= 1), `student ${g}: no duplicate question inside the attempt`);
+}
+ok(new Set(ords).size === 8, 'different question order for every attempt');
+ok(new Set(sets).size > 1, 'different 30-of-50 sets across attempts');
+ok(firsts.size >= 4, `first question differs between neighbours (${firsts.size} distinct of 8)`);
+// choice shuffle scored right, and the client never sees the answer
+const a1 = att[0];
+let rightCount = 0, textsSeen = new Set(), leak = false, scoreOk = true;
+for (let i = 0; i < 30; i++) {
+  const n1 = await j(`select public.cut_camm311_quiz_next($1,$2) r`, [a1.attempt, a1.token]);
+  if (/correct/i.test(JSON.stringify(n1))) leak = true;
+  const rp = n1.options.findIndex(o => o.en.endsWith(' right'));
+  textsSeen.add(n1.options.map(o => o.en.replace(/^Q[0-9]+ /, '')).join());
+  const wrongPos = (rp + 1) % 4;
+  const want = i % 5 === 0 ? wrongPos : rp;       // every 5th answer deliberately wrong
+  const r = await j(`select public.cut_camm311_quiz_submit($1,$2,$3,$4) r`, [a1.attempt, a1.token, n1.idx, want]);
+  if (!r.ok) scoreOk = false;
+  if (i % 5 !== 0) rightCount++;
+}
+ok(!leak, 'no answer index in any served question');
+ok(scoreOk, 'all 30 submissions accepted');
+ok(textsSeen.size > 4, `choices shuffled per question (${textsSeen.size} different orders)`);
+const fin = await j(`select public.cut_camm311_quiz_next($1,$2) r`, [a1.attempt, a1.token]);
+ok(fin.done === true && fin.n === 30, 'after 30 answers: done, out of 30');
+const sc = (await j(`select public.cut_camm311_quiz_board(1,$1,true) r`, [LECT])).students.find(s => s.attempt === a1.attempt);
+ok(sc.correct === rightCount && sc.n === 30 && sc.finished === true, `choice shuffle mapped back correctly: ${sc.correct} / 30 (expected ${rightCount})`);
+// reset keeps the same set and order
+const ordBefore = (await su(`select q_order o from cut_camm311_quiz_attempts where id=$1`, [att[1].attempt]))[0].o.join();
+const firstBefore = (await j(`select public.cut_camm311_quiz_next($1,$2) r`, [att[1].attempt, att[1].token])).stem_en;
+await j(`select public.cut_camm311_quiz_reset_device(1,$1,$2) r`, [LECT, att[1].attempt]);
+const rs = await j(`select public.cut_camm311_quiz_start('s2@test.example',1,$1) r`, [ROOMX]);
+const ordAfter = (await su(`select q_order o from cut_camm311_quiz_attempts where id=$1`, [att[1].attempt]))[0].o.join();
+ok(rs.token && rs.attempt === att[1].attempt && ordBefore === ordAfter, 'device reset keeps the same attempt and the same 30 questions in the same order');
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [rs.attempt, rs.token])).stem_en === firstBefore, 'after reset the open question is the same one');
+// count setting respected, deadline = n x 33 + 10
+await sux(`update cut_camm311_quiz set n_questions = 7`);
+const s7 = await j(`select public.cut_camm311_quiz_start('s9@test.example',1,$1) r`, [ROOMX]);
+ok(s7.n === 7 && (await su(`select array_length(q_order,1) l from cut_camm311_quiz_attempts where id=$1`, [s7.attempt]))[0].l === 7, 'n_questions = 7 gives a 7-question attempt');
+ok((await j(`select public.cut_camm311_quiz_info() r`)).n === 7, 'info follows the setting');
+await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '236 seconds', approved_at = now() - interval '236 seconds' where id='${s7.attempt}'`);
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [s7.attempt, s7.token])).done === false, 'at 236 s (< 7 x 33 + 10 = 241) the attempt is still open');
+await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '246 seconds', approved_at = now() - interval '246 seconds' where id='${s7.attempt}'`);
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [s7.attempt, s7.token])).closed === true, 'at 246 s (> 241) the attempt is closed: deadline follows n');
+await sux(`update cut_camm311_quiz set n_questions = 80`);
+const s80 = await j(`select public.cut_camm311_quiz_start('s10@test.example',1,$1) r`, [ROOMX]);
+ok(s80.n === 50, 'count above the pool size is capped at the pool (50)');
+await sux(`update cut_camm311_quiz set n_questions = 30`);
+
 // ---- #8 rollback guard
 await db.exec('reset role');
 ok(await throws(RB), 'rollback refuses while attempts exist');
