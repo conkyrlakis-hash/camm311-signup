@@ -12,6 +12,7 @@
       badEmail: 'Check your email address.', badRoom: 'Enter the room code from the screen.',
       cannot: 'Cannot start. Check your email and the room code, and that the quiz is open.',
       already: 'Already started on another device. Ask the lecturer.',
+      poolShort: 'The quiz is not ready. Tell the lecturer.',
       later: 'Too many tries. Wait a few minutes.',
       noServer: 'No connection. Try again.',
       noQuiz: 'No quiz is open right now.', closedNote: 'The quiz is not open. Wait for the lecturer.',
@@ -29,6 +30,7 @@
       badEmail: 'Ελέγξτε το email σας.', badRoom: 'Γράψτε τον κωδικό αίθουσας από την οθόνη.',
       cannot: 'Δεν είναι δυνατή η έναρξη. Ελέγξτε το email, τον κωδικό και ότι το κουίζ είναι ανοιχτό.',
       already: 'Έχει ήδη ξεκινήσει σε άλλη συσκευή. Ρωτήστε τον διδάσκοντα.',
+      poolShort: 'Το κουίζ δεν είναι έτοιμο. Ενημερώστε τον διδάσκοντα.',
       later: 'Πολλές προσπάθειες. Περιμένετε λίγα λεπτά.',
       noServer: 'Δεν υπάρχει σύνδεση. Δοκιμάστε ξανά.',
       noQuiz: 'Δεν υπάρχει ανοιχτό κουίζ αυτή τη στιγμή.', closedNote: 'Το κουίζ δεν είναι ανοιχτό. Περιμένετε τον διδάσκοντα.',
@@ -116,7 +118,7 @@
           try { localStorage.setItem(SKEY, JSON.stringify(S.sess)); } catch (x) {}
           loadNext();
         } else {
-          var k = r && r.error === 'already_started' ? 'already' : r && r.error === 'rate_limited' ? 'later' : 'cannot';
+          var k = r && r.error === 'already_started' ? 'already' : r && r.error === 'rate_limited' ? 'later' : r && r.error === 'pool_short' ? 'poolShort' : 'cannot';
           out.appendChild(el('div', { class: 'band err' }, t(k)));
         }
       }).catch(function () { out.appendChild(el('div', { class: 'band err' }, t('noServer'))); })

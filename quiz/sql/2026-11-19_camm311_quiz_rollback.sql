@@ -20,6 +20,7 @@ drop function if exists public.cut_camm311_quiz_reset_device(int, text, uuid);
 drop function if exists public.cut_camm311_quiz_room_regen(int, text);
 drop function if exists public.cut_camm311_quiz_board(int, text, boolean);
 drop function if exists public.cut_camm311_quiz_admin_set_lecturer(int, text);
+drop function if exists public.cut_camm311_quiz_nq_guard() cascade;
 drop function if exists public.cut_camm311_quiz_admin_load_bank(int, jsonb, int, boolean);
 drop function if exists public.cut_camm311_quiz_lect_ok(int, text);
 drop function if exists public.cut_camm311_quiz_leave(uuid, uuid, int);

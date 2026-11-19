@@ -20,8 +20,10 @@ def main(argv):
                     'correct_idx': q['correct_idx'], 'lecture': q.get('lecture')})
     tag = 'bankq'
     print("-- Quiz bank load for pa DEV. Review, then run in the SQL editor. %d questions." % len(out))
+    print("begin;")
     print("select public.cut_camm311_quiz_admin_load_bank(%d, $%s$%s$%s$::jsonb, %d, %s);" % (
         quiz, tag, json.dumps(out, ensure_ascii=False), tag, n, 'true' if force else 'false'))
+    print("commit;")
 
 if __name__ == '__main__':
     main(sys.argv[1:])

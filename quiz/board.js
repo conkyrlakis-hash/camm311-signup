@@ -10,7 +10,7 @@
       newRoom: 'New room code', projector: 'Open projector view', roomHint: 'Press "New room code", then open the projector view and show it to the class. The old code stops working for new starts.',
       scoresShow: 'Show scores', scoresHide: 'Hide scores', scoresNote: 'Scores are hidden until you show them or the quiz closes.',
       approveAll: 'Approve all', approve: 'Approve', clear: 'Clear blocks', clearDone: 'Counters cleared: ',
-      aRoom: function (n) { return 'Wrong room codes tried: ' + n; }, aEmail: function (n) { return 'Unknown emails tried: ' + n; }, aLect: function (n) { return 'Wrong lecturer codes: ' + n; },
+      aPool: 'ALERT: the question pool is smaller than the number of questions. Students cannot start.', aRoom: function (n) { return 'Wrong room codes tried: ' + n; }, aEmail: function (n) { return 'Unknown emails tried: ' + n; }, aLect: function (n) { return 'Wrong lecturer codes: ' + n; },
       legR: 'Left the app', legA: 'Waiting, duplicate start or device reset', legG: 'Finished',
       student: 'Student', section: 'Section', progress: 'Progress', correct: 'Correct', status: 'Status', action: 'Action',
       sLeft: function (n) { return 'Left app x' + n; }, sDup: 'Second start blocked', sReset: 'Reset waiting', sPend: 'Waiting for approval', sDone: 'Finished', sRun: 'In progress', sTime: function (n) { return 'Timeouts ' + n; },
@@ -22,7 +22,7 @@
       newRoom: 'Νέος κωδικός αίθουσας', projector: 'Άνοιγμα προβολής', roomHint: 'Πατήστε "Νέος κωδικός αίθουσας", ανοίξτε την προβολή και δείξτε την στην τάξη. Ο παλιός δεν ισχύει πια για νέες εκκινήσεις.',
       scoresShow: 'Εμφάνιση βαθμών', scoresHide: 'Απόκρυψη βαθμών', scoresNote: 'Οι βαθμοί είναι κρυμμένοι μέχρι να τους εμφανίσετε ή να κλείσει το κουίζ.',
       approveAll: 'Έγκριση όλων', approve: 'Έγκριση', clear: 'Καθαρισμός αποκλεισμών', clearDone: 'Καθαρίστηκαν: ',
-      aRoom: function (n) { return 'Λάθος κωδικοί αίθουσας: ' + n; }, aEmail: function (n) { return 'Άγνωστα email: ' + n; }, aLect: function (n) { return 'Λάθος κωδικοί διδάσκοντα: ' + n; },
+      aPool: 'ΣΥΝΑΓΕΡΜΟΣ: το σύνολο ερωτήσεων είναι μικρότερο από τον αριθμό ερωτήσεων. Οι φοιτητές δεν μπορούν να ξεκινήσουν.', aRoom: function (n) { return 'Λάθος κωδικοί αίθουσας: ' + n; }, aEmail: function (n) { return 'Άγνωστα email: ' + n; }, aLect: function (n) { return 'Λάθος κωδικοί διδάσκοντα: ' + n; },
       legR: 'Έφυγε από την εφαρμογή', legA: 'Αναμονή, διπλή εκκίνηση ή επαναφορά συσκευής', legG: 'Ολοκληρώθηκε',
       student: 'Φοιτητής', section: 'Τμήμα', progress: 'Πρόοδος', correct: 'Σωστές', status: 'Κατάσταση', action: 'Ενέργεια',
       sLeft: function (n) { return 'Έφυγε από εφαρμογή x' + n; }, sDup: 'Αποκλείστηκε δεύτερη εκκίνηση', sReset: 'Αναμονή επαναφοράς', sPend: 'Αναμονή έγκρισης', sDone: 'Ολοκληρώθηκε', sRun: 'Σε εξέλιξη', sTime: function (n) { return 'Εκπρόθεσμες ' + n; },
@@ -126,6 +126,7 @@
         el('div', { class: 'lab', style: 'margin-top:6px;max-width:260px' }, t('scoresNote')))));
     var a = data.alerts || {};
     var warn = [];
+    if (a.pool_short) warn.push(t('aPool'));
     if (a.room_guesses > 0) warn.push(t('aRoom')(a.room_guesses));
     if (a.unknown_emails > 0) warn.push(t('aEmail')(a.unknown_emails));
     if (a.lecturer_code_fails > 0) warn.push(t('aLect')(a.lecturer_code_fails));

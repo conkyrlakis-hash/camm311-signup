@@ -9,8 +9,9 @@
 --        select public.cut_camm311_quiz_admin_set_lecturer(1, '<your lecturer code>');
 --      The seed holds a random hash nobody knows, so there is no usable default code.
 --      Later change from the board side: cut_camm311_quiz_lecturer_code_change(quiz, old, new).
---   2. Set the quiz settings (date window, number of questions) and switch it on:
---        update public.cut_camm311_quiz set opens_at = '...', closes_at = '...', n_questions = N, active = true where id = 1;
+--   2. Set the quiz settings (title, date window, number of questions) and switch it on. n_questions cannot exceed the loaded pool:
+--        update public.cut_camm311_quiz set title = 'CAMM 311 Final Quiz', opens_at = '...', closes_at = '...', n_questions = N, active = true where id = 1;
+--      (the bank loader in step 2b already sets that title and n_questions and keeps the quiz inactive)
 --      approve_devices (default true): a new start shows as pending; the token works only after the lecturer taps Approve.
 --   2b. Load the question bank: python quiz/tools/make_load_sql.py <bank.json> > load.sql, then run load.sql in the SQL editor.
 --       The bank text never goes into the repo.
@@ -28,7 +29,7 @@ create table if not exists public.cut_camm311_quiz (
   active        boolean     not null default false,      -- owner switches on
   opens_at      timestamptz,                             -- quiz date/window: NOT GIVEN YET (null = never open)
   closes_at     timestamptz,
-  n_questions   int         not null default 30 check (n_questions > 0),  -- questions per attempt, drawn at random from the pool; the deadline follows it
+  n_questions   int         not null default 30 check (n_questions between 1 and 100),  -- questions per attempt, drawn at random from the pool; the deadline follows it
   seconds       int         not null default 30 check (seconds between 5 and 600),
   grace_seconds int         not null default 3  check (grace_seconds between 0 and 15),
   slack_seconds int         not null default 10 check (slack_seconds between 0 and 120),  -- added to the whole-attempt deadline
@@ -51,6 +52,22 @@ create table if not exists public.cut_camm311_quiz_questions (
 );
 alter table public.cut_camm311_quiz_questions add column if not exists lecture smallint;
 alter table public.cut_camm311_quiz alter column n_questions set default 30;
+alter table public.cut_camm311_quiz drop constraint if exists cut_camm311_quiz_n_questions_check;
+alter table public.cut_camm311_quiz add constraint cut_camm311_quiz_n_questions_check check (n_questions between 1 and 100);
+
+-- n_questions may never exceed the pool: a short attempt would hand a student fewer questions without anyone noticing.
+create or replace function public.cut_camm311_quiz_nq_guard() returns trigger language plpgsql set search_path = public, pg_temp as $g$
+declare pool int;
+begin
+  select count(*) into pool from public.cut_camm311_quiz_questions where quiz_id = new.id;
+  if new.n_questions > pool then
+    raise exception 'n_questions (%) is larger than the question pool (%)', new.n_questions, pool;
+  end if;
+  return new;
+end $g$;
+drop trigger if exists cut_camm311_quiz_nq_guard on public.cut_camm311_quiz;
+create trigger cut_camm311_quiz_nq_guard before update of n_questions on public.cut_camm311_quiz
+  for each row when (new.n_questions is distinct from old.n_questions) execute function public.cut_camm311_quiz_nq_guard();
 
 create table if not exists public.cut_camm311_quiz_attempts (
   id          uuid primary key default gen_random_uuid(),
@@ -181,7 +198,7 @@ end $$;
 -- p_bank = jsonb array of {"stem_en","stem_gr","options":[{"en","gr"} x4],"correct_idx":0..3,"lecture":8}.
 -- Idempotent: replaces ALL questions of the quiz (demo included) with exactly this bank; running it twice gives the same pool.
 -- Refuses (raises) if any attempt exists for the quiz, unless p_force is true (then attempts and their answers are deleted first).
--- Sets n_questions = least(p_n, bank size). Not callable by anon/authenticated.
+-- Sets n_questions = least(p_n, bank size), the title 'CAMM 311 Final Quiz', and keeps the quiz inactive. Rejects empty texts and duplicate stems. Not callable by anon/authenticated.
 create or replace function public.cut_camm311_quiz_admin_load_bank(p_quiz int, p_bank jsonb, p_n int default 30, p_force boolean default false)
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
 declare e jsonb; n int := 0; na int; nq int;
@@ -190,10 +207,18 @@ begin
   if p_bank is null or jsonb_typeof(p_bank) <> 'array' or jsonb_array_length(p_bank) < 1 then raise exception 'bank must be a non-empty json array'; end if;
   for e in select * from jsonb_array_elements(p_bank) loop
     n := n + 1;
-    if coalesce(e ->> 'stem_en', '') = '' or coalesce(e ->> 'stem_gr', '') = '' then raise exception 'question % has no stem', n; end if;
+    if btrim(coalesce(e ->> 'stem_en', '')) = '' or btrim(coalesce(e ->> 'stem_gr', '')) = '' then raise exception 'question % has no stem', n; end if;
     if jsonb_typeof(e -> 'options') <> 'array' or jsonb_array_length(e -> 'options') <> 4 then raise exception 'question % needs exactly 4 options', n; end if;
+    if exists (select 1 from jsonb_array_elements(e -> 'options') o
+                where jsonb_typeof(o) <> 'object' or btrim(coalesce(o ->> 'en', '')) = '' or btrim(coalesce(o ->> 'gr', '')) = '') then
+      raise exception 'question % has an empty option (en or gr)', n;
+    end if;
     if (e ->> 'correct_idx') is null or (e ->> 'correct_idx')::int not between 0 and 3 then raise exception 'question % has a bad correct_idx', n; end if;
   end loop;
+  if (select count(distinct lower(btrim(x ->> 'stem_en'))) from jsonb_array_elements(p_bank) x) <> n
+     or (select count(distinct lower(btrim(x ->> 'stem_gr'))) from jsonb_array_elements(p_bank) x) <> n then
+    raise exception 'bank has duplicate stems';
+  end if;
   select count(*) into na from public.cut_camm311_quiz_attempts where quiz_id = p_quiz;
   if na > 0 and not coalesce(p_force, false) then raise exception 'refused: % attempts exist for this quiz (pass p_force = true to delete them)', na; end if;
   delete from public.cut_camm311_quiz_attempts where quiz_id = p_quiz;      -- cascades to answers
@@ -202,7 +227,7 @@ begin
   select p_quiz, false, x ->> 'stem_en', x ->> 'stem_gr', x -> 'options', (x ->> 'correct_idx')::int, nullif(x ->> 'lecture', '')::smallint
     from jsonb_array_elements(p_bank) x;
   nq := least(greatest(coalesce(p_n, 30), 1), n);
-  update public.cut_camm311_quiz set n_questions = nq where id = p_quiz;
+  update public.cut_camm311_quiz set n_questions = nq, title = 'CAMM 311 Final Quiz', active = false where id = p_quiz;
   return jsonb_build_object('loaded', n, 'n_questions', nq, 'attempts_deleted', na);
 end $$;
 
@@ -212,7 +237,7 @@ create or replace function public.cut_camm311_quiz_info()
 returns jsonb language sql security definer set search_path = public, pg_temp as $$
   select coalesce((select jsonb_build_object(
            'quiz_id', q.id, 'title', q.title, 'seconds', q.seconds,
-           'n', least(q.n_questions, (select count(*) from public.cut_camm311_quiz_questions x where x.quiz_id = q.id)),
+           'n', q.n_questions,
            'open', (q.active and now() >= coalesce(q.opens_at, 'infinity') and now() <= coalesce(q.closes_at, '-infinity')),
            'closed', (now() > coalesce(q.closes_at, '-infinity') or not q.active),
            'started', (select count(*) from public.cut_camm311_quiz_attempts a where a.quiz_id = q.id),
@@ -256,6 +281,9 @@ begin
 
   select * into a from public.cut_camm311_quiz_attempts where quiz_id = qz.id and signup_id = s.id;
   if not found then
+    if (select count(*) from public.cut_camm311_quiz_questions where quiz_id = qz.id) < qz.n_questions then
+      return jsonb_build_object('error', 'pool_short');    -- never a short attempt; the board shows the alert
+    end if;
     select array_agg(id order by random()) into ids from (
       select id from public.cut_camm311_quiz_questions where quiz_id = qz.id order by random() limit qz.n_questions) t;
     if ids is null then return jsonb_build_object('error', 'cannot_start'); end if;
@@ -389,6 +417,7 @@ begin
   return jsonb_build_object('title', qz.title, 'n', qz.n_questions, 'room_set', qz.room_hash is not null,
     'closed', closed, 'scores_visible', (p_scores or closed), 'students', res,
     'alerts', jsonb_build_object(
+      'pool_short', qz.n_questions > (select count(*) from public.cut_camm311_quiz_questions x where x.quiz_id = qz.id),
       'room_guesses', (select count(*) from public.cut_camm311_quiz_fails f where f.quiz_id = qz.id and f.key = 'room' and f.at > now() - interval '10 minutes'),
       'unknown_emails', (select count(*) from public.cut_camm311_quiz_fails f where f.quiz_id = qz.id and f.key like 'em:%' and f.at > now() - interval '10 minutes'),
       'lecturer_code_fails', (select count(*) from public.cut_camm311_quiz_fails f where f.quiz_id = qz.id and f.key = 'lect' and f.at > now() - interval '10 minutes')));
@@ -485,7 +514,7 @@ grant execute on function public.cut_camm311_quiz_info(), public.cut_camm311_qui
 do $seed$
 declare qid int;
 begin
-  if exists (select 1 from public.cut_camm311_quiz where title = 'DEMO quiz - not an exam') then return; end if;
+  if exists (select 1 from public.cut_camm311_quiz) then return; end if;   -- any quiz row (also a renamed one) means already seeded
   insert into public.cut_camm311_quiz(title, active, n_questions, lecturer_hash, lecturer_set)
   values ('DEMO quiz - not an exam', false, 5, extensions.crypt(encode(extensions.gen_random_bytes(24), 'hex'), extensions.gen_salt('bf')), false)
   returning id into qid;

@@ -232,6 +232,21 @@ const ld = (await q(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb
 ok(ld.loaded === 50 && ld.n_questions === 30 && ld.attempts_deleted > 0, 'forced load: 50 questions, n_questions 30, old attempts removed');
 const ld2 = (await q(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb) r`, [BJ]))[0].r;
 ok(ld2.loaded === 50 && ld2.attempts_deleted === 0 && Number((await q(`select count(*) c from cut_camm311_quiz_questions`))[0].c) === 50, 'loader is idempotent: second run leaves exactly 50, no demo left');
+{
+  const t = (await q(`select title, active from cut_camm311_quiz where id=1`))[0];
+  ok(t.title === 'CAMM 311 Final Quiz' && t.active === false, 'loader sets the title CAMM 311 Final Quiz and keeps the quiz inactive');
+  await sux(`update cut_camm311_quiz set active = true`);
+  await db.exec('reset role');
+  const bad = (m) => JSON.stringify(BANK.map((x, i) => i === 0 ? m(JSON.parse(JSON.stringify(x))) : x));
+  const L = (b) => throws(`select public.cut_camm311_quiz_admin_load_bank(1, $1::jsonb, 30, true)`, [b]);
+  ok(await L(bad(x => { x.options[2].gr = ''; return x; })), 'loader refuses an empty Greek option');
+  ok(await L(bad(x => { x.options[1].en = '  '; return x; })), 'loader refuses a blank English option');
+  ok(await L(bad(x => { x.stem_gr = ''; return x; })), 'loader refuses an empty Greek stem');
+  ok(await L(bad(x => { x.stem_en = BANK[1].stem_en; return x; })), 'loader refuses duplicate stems');
+  ok(Number((await q(`select count(*) c from cut_camm311_quiz_questions`))[0].c) === 50, 'refused loads changed nothing');
+  ok(await throws(`update cut_camm311_quiz set n_questions = 80`), 'n_questions above the pool (50) is refused');
+  ok(await throws(`update cut_camm311_quiz set n_questions = 0`) && await throws(`update cut_camm311_quiz set n_questions = 101`), 'n_questions must be between 1 and 100');
+}
 ok(Number((await q(`select count(distinct lecture) c from cut_camm311_quiz_questions`))[0].c) === 3, 'lecture tag stored');
 ok(Number((await q(`select count(*) c from cut_camm311_quiz_questions where is_demo`))[0].c) === 0, 'loaded questions are not demo');
 await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false`);
@@ -289,10 +304,19 @@ await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '2
 ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [s7.attempt, s7.token])).done === false, 'at 236 s (< 7 x 33 + 10 = 241) the attempt is still open');
 await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '246 seconds', approved_at = now() - interval '246 seconds' where id='${s7.attempt}'`);
 ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [s7.attempt, s7.token])).closed === true, 'at 246 s (> 241) the attempt is closed: deadline follows n');
-await sux(`update cut_camm311_quiz set n_questions = 80`);
-const s80 = await j(`select public.cut_camm311_quiz_start('s10@test.example',1,$1) r`, [ROOMX]);
-ok(s80.n === 50, 'count above the pool size is capped at the pool (50)');
+await sux(`update cut_camm311_quiz set n_questions = 50`);
+const s50 = await j(`select public.cut_camm311_quiz_start('s10@test.example',1,$1) r`, [ROOMX]);
+ok(s50.n === 50 && (await su(`select array_length(q_order,1) l from cut_camm311_quiz_attempts where id=$1`, [s50.attempt]))[0].l === 50, 'n_questions = 50 = whole pool gives all 50');
+// pool short (guard bypassed on purpose): start must refuse, never hand out a short attempt; board shows the alert
+await sux(`alter table cut_camm311_quiz disable trigger cut_camm311_quiz_nq_guard`);
+await sux(`update cut_camm311_quiz set n_questions = 60`);
+await sux(`alter table cut_camm311_quiz enable trigger cut_camm311_quiz_nq_guard`);
+const sShort = await j(`select public.cut_camm311_quiz_start('s11@test.example',1,$1) r`, [ROOMX]);
+ok(sShort.error === 'pool_short' && !sShort.attempt, 'pool smaller than n_questions: start answers pool_short, no short attempt');
+ok(Number((await su(`select count(*) c from cut_camm311_quiz_attempts a join cut_camm311_signups s on s.id=a.signup_id where lower(s.email)='s11@test.example'`))[0].c) === 0, 'no attempt row was created for the short pool');
+ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).alerts.pool_short === true, 'board alert pool_short is on');
 await sux(`update cut_camm311_quiz set n_questions = 30`);
+ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).alerts.pool_short === false, 'board alert pool_short is off again');
 
 // ---- #8 rollback guard
 await db.exec('reset role');
