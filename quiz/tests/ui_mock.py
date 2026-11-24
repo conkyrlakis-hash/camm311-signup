@@ -21,7 +21,7 @@ QS = [
     {'idx': 1, 'n': 5, 'stem_en': 'DEMO 2: Pick the second option.', 'stem_gr': 'DEMO 2: Επιλέξτε τη δεύτερη επιλογή.',
      'options': [{'en': 'Third', 'gr': 'Τρίτη'}, {'en': 'First', 'gr': 'Πρώτη'}, {'en': 'Second', 'gr': 'Δεύτερη'}], 'remaining_ms': 30000, 'done': False},
 ]
-state = {'i': 0, 'log': [], 'bodies': [], 'pending': False, 'approved': False}
+state = {'i': 0, 'log': [], 'bodies': [], 'pending': False, 'approved': False, 'running': True}
 
 def reply(route, obj, status=200):
     route.fulfill(status=status, content_type='application/json', body=json.dumps(obj),
@@ -32,12 +32,13 @@ def handler(route, req):
     body = req.post_data_json or {}
     state['log'].append(fn); state['bodies'].append(body)
     if req.method == 'OPTIONS': return route.fulfill(status=204, headers={'access-control-allow-origin': '*', 'access-control-allow-headers': '*'})
-    if fn == 'cut_camm311_quiz_info': return reply(route, {'quiz_id': 1, 'title': 'DEMO quiz', 'seconds': 30, 'n': 5, 'open': True, 'started': 7})
+    if fn == 'cut_camm311_quiz_info': return reply(route, {'quiz_id': 1, 'title': 'DEMO quiz', 'seconds': 30, 'n': 5, 'open': True, 'started': 7, 'running': state['running']})
     if fn == 'cut_camm311_quiz_start':
         if body['p_room'] != 'K7M2QX': return reply(route, {'error': 'cannot_start'})
-        return reply(route, {'attempt': 'a-1', 'token': 't-1', 'name': 'Anna Demo', 'section': 'CAMM 311.2 (EN)', 'n': 5, 'seconds': 30, 'pending': state['pending']})
+        return reply(route, {'attempt': 'a-1', 'token': 't-1', 'name': 'Anna Demo', 'section': 'CAMM 311.2 (EN)', 'n': 5, 'seconds': 30, 'pending': state['pending'], 'quiz': 1, 'running': state['running']})
     if fn == 'cut_camm311_quiz_next':
         if state['pending'] and not state['approved']: return reply(route, {'pending': True})
+        if not state['running']: return reply(route, {'lobby': True})
         if state['i'] >= len(QS): return reply(route, {'done': True, 'n': 5})
         return reply(route, QS[state['i']])
     if fn == 'cut_camm311_quiz_submit': state['i'] += 1; return reply(route, {'ok': True})
@@ -50,10 +51,14 @@ def handler(route, req):
                     'timeouts': to, 'dup': dup, 'reset_pending': rp, 'finished': fin, 'seen_s_ago': 2, 'pending': pend}
             if not scores: d.pop('correct')
             return d
-        return reply(route, {'title': 'DEMO quiz - not an exam', 'n': 10, 'room_set': True, 'scores_visible': scores, 'alerts': {'room_guesses': 12, 'unknown_emails': 0, 'lecturer_code_fails': 0}, 'students': [
+        return reply(route, {'title': 'DEMO quiz - not an exam', 'n': 10, 'room_set': True, 'scores_visible': scores, 'running': state['running'], 'run_at': '2026-11-27T10:00:00Z' if state['running'] else None, 'signed_up': 9,
+            'missing': [{'name': 'Late Comer', 'section': 'CAMM 311.1 (GR)'}, {'name': 'Zoe Demo', 'section': 'CAMM 311.2 (EN)'}], 'alerts': {'room_guesses': 12, 'unknown_emails': 0, 'lecturer_code_fails': 0}, 'students': [
             r('Anna Demo', 'CAMM 311.2 (EN)', 4, 3), r('Elena Demo', 'CAMM 311.1 (GR)', 6, 4, left=2),
             r('Marios Demo', 'CAMM 311.1 (GR)', 10, 8, fin=True), r('Nikos Demo', 'CAMM 311.2 (EN)', 3, 2, dup=1),
             r('Sofia Demo', 'CAMM 311.2 (EN)', 5, 3, rp=True), r('Petros Demo', 'CAMM 311.1 (GR)', 7, 5, to=1), r('Vera Demo', 'CAMM 311.2 (EN)', 0, 0, pend=True)]})
+    if fn == 'cut_camm311_quiz_begin':
+        if body.get('p_code') != 'LECT': return reply(route, {'error': 'forbidden'})
+        state['running'] = True; return reply(route, {'ok': True, 'run_at': '2026-11-27T10:00:00Z'})
     if fn == 'cut_camm311_quiz_room_regen': return reply(route, {'room': 'K7M2QX'})
     if fn in ('cut_camm311_quiz_approve', 'cut_camm311_quiz_clear_blocks'): return reply(route, {'ok': True, 'approved': 1, 'cleared': 12})
     if fn == 'cut_camm311_quiz_reset_device': return reply(route, {'ok': True})
@@ -140,6 +145,41 @@ with sync_playwright() as p:
     state['approved'] = True
     sp.wait_for_selector('.opt', timeout=6000)
     check(True, 'student: question appears by itself after approval')
+    # ---------- lobby: student waits, board roll-call and Start ----------
+    state['pending'] = False; state['running'] = False; state['i'] = 0
+    ctx3 = b.new_context(viewport={'width': 360, 'height': 740}, locale='en')
+    ctx3.route('**/rest/v1/rpc/**', handler)
+    lp = ctx3.new_page(); lp.goto(BASE + 'index.html'); lp.wait_for_selector('#email')
+    lp.fill('#email', 'anna@test.example'); lp.fill('#room', 'K7M2QX'); lp.click('button[type=submit]')
+    lp.wait_for_selector('h1:has-text("You are signed in")')
+    check('Anna Demo' in lp.inner_text('main') and lp.locator('.opt').count() == 0, 'student: lobby screen with the name, no question before Start')
+    lp.screenshot(path=f'{SHOTS}/6_student_lobby_360.png')
+    lp.reload(); lp.wait_for_selector('h1:has-text("You are signed in")')
+    check(True, 'student: a reload during the lobby stays in the lobby (same session)')
+    state['running'] = True
+    lp.wait_for_selector('.opt', timeout=6000)
+    check(True, 'student: the first question appears by itself once the lecturer starts')
+    # a session left over from another quiz is thrown away: fresh sign-in
+    lp.evaluate("localStorage.setItem('camm311_quiz_session', JSON.stringify({attempt:'old', token:'old', name:'Old', n:5, quiz:99}))")
+    lp.reload(); lp.wait_for_selector('#email')
+    check(True, 'student: a saved session from an earlier quiz is dropped, the login form is shown')
+    lp.evaluate("localStorage.setItem('camm311_quiz_session', JSON.stringify({attempt:'old', token:'old', name:'Old', n:5}))")
+    lp.reload(); lp.wait_for_selector('#email')
+    check(True, 'student: a saved session with no quiz tag is dropped too')
+    ctx3.close()
+    state['running'] = False
+    ctx4 = b.new_context(viewport={'width': 1280, 'height': 900}, locale='en')
+    ctx4.route('**/rest/v1/rpc/**', handler)
+    bp = ctx4.new_page(); bp.on('dialog', lambda d: d.accept()); bp.goto(BASE + 'board.html')
+    bp.fill('#lc', 'LECT'); bp.click('button[type=submit]'); bp.wait_for_selector('#rollcount')
+    check('Signed in: 7 of 9 signed up' in bp.inner_text('#rollcount'), 'board: roll-call counter signed in / signed up')
+    check(bp.locator('#missing li').count() == 2 and 'Late Comer' in bp.inner_text('#missing'), 'board: list of students who have not signed in')
+    check(bp.locator('#startquiz').count() == 1 and bp.locator('#runbanner').count() == 0, 'board: Start button in the lobby')
+    bp.screenshot(path=f'{SHOTS}/7_lecturer_lobby_1280.png')
+    bp.click('#startquiz'); bp.wait_for_selector('#runbanner')
+    check('cut_camm311_quiz_begin' in state['log'] and bp.locator('#startquiz').count() == 0 and bp.locator('#missing').count() == 0, 'board: after Start the banner shows, button and missing list go')
+    check(pj.locator('#qr').count() == 1 and pj.evaluate("document.getElementById('qr').naturalWidth > 100"), 'projector: QR image loads')
+    pj.screenshot(path=f'{SHOTS}/5_projector_1280.png')
     b.close()
 srv.shutdown()
 print('ALL OK' if ok else 'SOME FAILED'); sys.exit(0 if ok else 1)

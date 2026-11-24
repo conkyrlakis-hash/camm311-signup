@@ -32,7 +32,7 @@ const cnt = (await q(`select (select count(*) from cut_camm311_quiz) a, (select 
 ok(Number(cnt.a) === 1 && Number(cnt.b) === 5, 'seed is idempotent: applying the file twice leaves 1 quiz, 5 questions');
 
 const LECT = 'lecturer-secret-9';
-await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false`);
+await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false, run_at=now()-interval '1 hour'`);
 await db.exec('set role anon');
 
 // ---- #5 no usable default lecturer code
@@ -249,7 +249,7 @@ ok(ld2.loaded === 50 && ld2.attempts_deleted === 0 && Number((await q(`select co
 }
 ok(Number((await q(`select count(distinct lecture) c from cut_camm311_quiz_questions`))[0].c) === 3, 'lecture tag stored');
 ok(Number((await q(`select count(*) c from cut_camm311_quiz_questions where is_demo`))[0].c) === 0, 'loaded questions are not demo');
-await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false`);
+await db.exec(`update cut_camm311_quiz set active=true, opens_at=now()-interval '1 hour', closes_at=now()+interval '1 hour', approve_devices=false, run_at=now()-interval '1 hour'`);
 await db.exec('set role anon');
 const defN = (await su(`select column_default d from information_schema.columns where table_name='cut_camm311_quiz' and column_name='n_questions'`))[0].d;
 ok(String(defN) === '30', 'n_questions default is 30');
@@ -317,6 +317,42 @@ ok(Number((await su(`select count(*) c from cut_camm311_quiz_attempts a join cut
 ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).alerts.pool_short === true, 'board alert pool_short is on');
 await sux(`update cut_camm311_quiz set n_questions = 30`);
 ok((await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT])).alerts.pool_short === false, 'board alert pool_short is off again');
+
+// ---- lobby: nothing runs until the lecturer presses Start; roll-call on the board
+await sux(`update cut_camm311_quiz set run_at = null; insert into cut_camm311_signups(first_name,surname,email,section) values ('Lobby','Man','lobbyman@test.example','CAMM 311.2 (EN)'),('Late','Comer','latecomer@test.example','CAMM 311.1 (GR)')`);
+ok((await j(`select public.cut_camm311_quiz_info() r`)).running === false, 'info: running is false before Start');
+const lob = await j(`select public.cut_camm311_quiz_start('lobbyman@test.example',1,$1) r`, [ROOMX]);
+ok(lob.token && lob.quiz === 1 && lob.running === false, 'a student can sign in during the lobby (start returns quiz id, running false)');
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [lob.attempt, lob.token])).lobby === true, 'next() in the lobby returns lobby, no question');
+ok((await j(`select public.cut_camm311_quiz_submit($1,$2,0,0) r`, [lob.attempt, lob.token])).reason === 'lobby', 'submit() in the lobby is refused with reason lobby');
+ok(Number((await su(`select count(*) c from cut_camm311_quiz_answers where attempt_id=$1`, [lob.attempt]))[0].c) === 0, 'no answer row is created in the lobby');
+const bl0 = await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT]);
+const names0 = (bl0.missing || []).map(m => m.name);
+ok(bl0.running === false && bl0.run_at === null, 'board: running false in the lobby');
+ok(names0.includes('Late Comer') && !names0.includes('Lobby Man'), 'board missing list: signed-up student without an attempt is listed, a signed-in one is not');
+ok(Number(bl0.signed_up) === Number((await su(`select count(distinct lower(email)) c from cut_camm311_signups`))[0].c), 'board: signed_up equals the distinct sign-up e-mails');
+ok((await j(`select public.cut_camm311_quiz_begin(1,'bad') r`)).error === 'forbidden', 'begin with a wrong lecturer code is refused');
+ok(await throws(`select public.cut_camm311_quiz_begin(1,'x') r`) === false, 'begin is callable by anon (it checks the lecturer code itself)');
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [lob.attempt, lob.token])).lobby === true, 'a refused begin did not start the quiz');
+const bg = await j(`select public.cut_camm311_quiz_begin(1,$1) r`, [LECT]);
+ok(bg.ok === true && bg.run_at, 'begin with the right code starts the quiz');
+const bg2 = await j(`select public.cut_camm311_quiz_begin(1,$1) r`, [LECT]);
+ok(bg2.ok === true && bg2.run_at === bg.run_at, 'a second press changes nothing (same run_at)');
+const q1 = await j(`select public.cut_camm311_quiz_next($1,$2) r`, [lob.attempt, lob.token]);
+ok(q1.stem_en && q1.options && !q1.lobby, 'after begin the waiting student gets question 1');
+ok((await j(`select public.cut_camm311_quiz_info() r`)).running === true, 'info: running is true after Start');
+const bl1 = await j(`select public.cut_camm311_quiz_board(1,$1) r`, [LECT]);
+ok(bl1.running === true && bl1.run_at, 'board shows the quiz as running');
+ok(Number((await su(`select count(*) c from cut_camm311_quiz_reset_log where action='begin'`))[0].c) === 2, 'begin is logged');
+// deadline counts from Start, not from sign-in
+await sux(`update cut_camm311_quiz_attempts set started_at = now() - interval '3000 seconds', approved_at = now() - interval '3000 seconds' where id='${lob.attempt}'; update cut_camm311_quiz set run_at = now()`);
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [lob.attempt, lob.token])).closed !== true, 'signed in long ago, started just now: the attempt is not closed (clock runs from Start)');
+await sux(`update cut_camm311_quiz set run_at = now() - interval '3000 seconds'`);
+ok((await j(`select public.cut_camm311_quiz_next($1,$2) r`, [lob.attempt, lob.token])).closed === true, 'started long ago: the attempt is closed by its deadline');
+// begin on an inactive quiz
+await sux(`update cut_camm311_quiz set active = false, run_at = null`);
+ok((await j(`select public.cut_camm311_quiz_begin(1,$1) r`, [LECT])).error === 'not_active', 'begin on an inactive quiz answers not_active');
+await sux(`update cut_camm311_quiz set active = true, run_at = now() - interval '1 hour'`);
 
 // ---- #8 rollback guard
 await db.exec('reset role');

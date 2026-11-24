@@ -14,6 +14,8 @@
       legR: 'Left the app', legA: 'Waiting, duplicate start or device reset', legG: 'Finished',
       student: 'Student', section: 'Section', progress: 'Progress', correct: 'Correct', status: 'Status', action: 'Action',
       sLeft: function (n) { return 'Left app x' + n; }, sDup: 'Second start blocked', sReset: 'Reset waiting', sPend: 'Waiting for approval', sDone: 'Finished', sRun: 'In progress', sTime: function (n) { return 'Timeouts ' + n; },
+      rollT: function (a, b) { return 'Signed in: ' + a + ' of ' + b + ' signed up'; }, missingT: 'Not signed in yet', allIn: 'Everyone who signed up is in.',
+      startQ: 'Start quiz', startConfirm: function (n) { return 'Start the quiz now for ' + n + ' signed-in students? Their 30-second questions begin at once.'; }, runningT: function (h) { return 'Quiz running since ' + h; }, lobbyT: 'Waiting room: students see a wait screen until you press Start.',
       reset: 'Reset device', confirm: 'Reset the device for ', students: 'students', none: 'No one has started yet.'
     },
     gr: {
@@ -26,6 +28,8 @@
       legR: 'Έφυγε από την εφαρμογή', legA: 'Αναμονή, διπλή εκκίνηση ή επαναφορά συσκευής', legG: 'Ολοκληρώθηκε',
       student: 'Φοιτητής', section: 'Τμήμα', progress: 'Πρόοδος', correct: 'Σωστές', status: 'Κατάσταση', action: 'Ενέργεια',
       sLeft: function (n) { return 'Έφυγε από εφαρμογή x' + n; }, sDup: 'Αποκλείστηκε δεύτερη εκκίνηση', sReset: 'Αναμονή επαναφοράς', sPend: 'Αναμονή έγκρισης', sDone: 'Ολοκληρώθηκε', sRun: 'Σε εξέλιξη', sTime: function (n) { return 'Εκπρόθεσμες ' + n; },
+      rollT: function (a, b) { return 'Συνδεδεμένοι: ' + a + ' από ' + b + ' εγγεγραμμένους'; }, missingT: 'Δεν έχουν συνδεθεί ακόμη', allIn: 'Όλοι οι εγγεγραμμένοι έχουν συνδεθεί.',
+      startQ: 'Έναρξη κουίζ', startConfirm: function (n) { return 'Έναρξη του κουίζ τώρα για ' + n + ' συνδεδεμένους φοιτητές; Οι ερωτήσεις των 30 δευτερολέπτων ξεκινούν αμέσως.'; }, runningT: function (h) { return 'Το κουίζ τρέχει από ' + h; }, lobbyT: 'Αίθουσα αναμονής: οι φοιτητές βλέπουν οθόνη αναμονής μέχρι να πατήσετε Έναρξη.',
       reset: 'Επαναφορά συσκευής', confirm: 'Επαναφορά συσκευής για ', students: 'φοιτητές', none: 'Κανείς δεν έχει ξεκινήσει ακόμη.'
     }
   };
@@ -105,6 +109,11 @@
   }
   function approve(s) { act('cut_camm311_quiz_approve', { p_attempt: s ? s.attempt : null }); }
   function clearBlocks() { act('cut_camm311_quiz_clear_blocks', {}, function (d) { notice = t('clearDone') + d.cleared; }); }
+  function startQuiz() {
+    var n = (data && data.students ? data.students.length : 0);
+    if (!window.confirm(t('startConfirm')(n))) return;
+    act('cut_camm311_quiz_begin', {});
+  }
   function toggleScores() { showScores = !showScores; poll(); }
 
   function draw() {
@@ -124,6 +133,23 @@
         el('div', { class: 'lab' }, t('students') + ' / ' + t('sDone'))),
       el('div', {}, el('button', { class: 'btn ghost', id: 'scoretoggle', type: 'button', onclick: toggleScores }, showScores ? t('scoresHide') : t('scoresShow')),
         el('div', { class: 'lab', style: 'margin-top:6px;max-width:260px' }, t('scoresNote')))));
+    var roll = el('div', { class: 'panel', id: 'roll', style: 'margin:10px 0' },
+      el('div', { class: 'big', id: 'rollcount', style: 'font-size:34px;letter-spacing:0' }, t('rollT')(rows.length, data.signed_up == null ? '?' : data.signed_up)));
+    if (data.running) roll.appendChild(el('div', { class: 'band ok', id: 'runbanner' }, t('runningT')(new Date(data.run_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))));
+    else {
+      roll.appendChild(el('div', { class: 'lab', style: 'margin:6px 0' }, t('lobbyT')));
+      roll.appendChild(el('button', { class: 'btn', id: 'startquiz', type: 'button', onclick: startQuiz }, t('startQ')));
+    }
+    var miss = data.missing || [];
+    if (!data.running) {
+      if (miss.length) {
+        var ml = el('ul', { id: 'missing', style: 'margin:8px 0 0;padding-left:18px;columns:2' });
+        miss.forEach(function (m) { ml.appendChild(el('li', {}, m.name + (m.section ? ' (' + m.section + ')' : ''))); });
+        roll.appendChild(el('div', { class: 'lab', style: 'margin-top:10px' }, t('missingT') + ' (' + miss.length + ')'));
+        roll.appendChild(ml);
+      } else if (data.signed_up != null) roll.appendChild(el('div', { class: 'band ok', id: 'allin' }, t('allIn')));
+    }
+    page.appendChild(roll);
     var a = data.alerts || {};
     var warn = [];
     if (a.pool_short) warn.push(t('aPool'));

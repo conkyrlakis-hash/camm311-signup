@@ -21,7 +21,7 @@
       sending: 'Saving...', saved: 'Answer saved.', timeUp: 'Time is up.',
       lockedT: 'Question locked', lockedB: 'You left the app during this question. It is locked and the lecturer can see it.',
       cont: 'Next question', doneT: 'Quiz finished', doneB: 'Your answers are saved. You can close this page.',
-      pendT: 'Waiting for the lecturer', pendB: 'Your device is waiting for approval. This page continues by itself.', closedT: 'Quiz closed', closedB: 'The quiz is closed. Unanswered questions count as wrong.',
+      lobT: 'You are signed in', lobB: 'Wait here. The quiz starts when the lecturer presses Start. This page continues by itself.', pendT: 'Waiting for the lecturer', pendB: 'Your device is waiting for approval. This page continues by itself.', closedT: 'Quiz closed', closedB: 'The quiz is closed. Unanswered questions count as wrong.',
       sendFail: 'Could not save. Tap your answer again.', session: 'Session ended. Start again.', as: 'Signed in as'
     },
     gr: {
@@ -39,7 +39,7 @@
       sending: 'Αποθήκευση...', saved: 'Η απάντηση αποθηκεύτηκε.', timeUp: 'Ο χρόνος τελείωσε.',
       lockedT: 'Η ερώτηση κλειδώθηκε', lockedB: 'Φύγατε από την εφαρμογή κατά τη διάρκεια της ερώτησης. Κλειδώθηκε και ο διδάσκων το βλέπει.',
       cont: 'Επόμενη ερώτηση', doneT: 'Το κουίζ ολοκληρώθηκε', doneB: 'Οι απαντήσεις σας αποθηκεύτηκαν. Μπορείτε να κλείσετε τη σελίδα.',
-      pendT: 'Αναμονή για τον διδάσκοντα', pendB: 'Η συσκευή σας περιμένει έγκριση. Η σελίδα συνεχίζει αυτόματα.', closedT: 'Το κουίζ έκλεισε', closedB: 'Το κουίζ έκλεισε. Οι αναπάντητες ερωτήσεις μετρούν ως λάθος.',
+      lobT: 'Έχετε συνδεθεί', lobB: 'Περιμένετε εδώ. Το κουίζ ξεκινά όταν ο διδάσκων πατήσει Έναρξη. Η σελίδα συνεχίζει αυτόματα.', pendT: 'Αναμονή για τον διδάσκοντα', pendB: 'Η συσκευή σας περιμένει έγκριση. Η σελίδα συνεχίζει αυτόματα.', closedT: 'Το κουίζ έκλεισε', closedB: 'Το κουίζ έκλεισε. Οι αναπάντητες ερωτήσεις μετρούν ως λάθος.',
       sendFail: 'Αποτυχία αποθήκευσης. Πατήστε ξανά την απάντησή σας.', session: 'Η συνεδρία έληξε. Ξεκινήστε ξανά.', as: 'Συνδεδεμένος ως'
     }
   };
@@ -47,6 +47,7 @@
   var S = { lang: 'en', sess: null, info: null, q: null, tick: 0, open: false, busy: false, graceTimer: 0 };
   try { S.lang = localStorage.getItem(LKEY) || (/^el/i.test(navigator.language || '') ? 'gr' : 'en'); } catch (e) {}
   try { S.sess = JSON.parse(localStorage.getItem(SKEY) || 'null'); } catch (e) { S.sess = null; }
+  /* sessions are tagged with the quiz id; a session left over from an earlier quiz is dropped so everyone signs in again */
 
   var main = document.getElementById('main');
   function t(k) { return T[S.lang][k]; }
@@ -114,7 +115,7 @@
       btn.disabled = true; btn.textContent = t('checking');
       rpc('cut_camm311_quiz_start', { p_email: email, p_quiz: S.info.quiz_id, p_room: rc }).then(function (r) {
         if (r && r.token) {
-          S.sess = { attempt: r.attempt, token: r.token, name: r.name, n: r.n };
+          S.sess = { attempt: r.attempt, token: r.token, name: r.name, n: r.n, quiz: r.quiz };
           try { localStorage.setItem(SKEY, JSON.stringify(S.sess)); } catch (x) {}
           loadNext();
         } else {
@@ -142,6 +143,12 @@
   function pendingScreen() {
     stopTick(); setLeaveGuard(false); clearTimeout(S.graceTimer);
     show(el('div', { class: 'page' }, el('h1', {}, t('pendT')), el('div', { class: 'band' }, t('pendB'))));
+    S.graceTimer = setTimeout(loadNext, 2000);
+  }
+
+  function lobbyScreen() {
+    stopTick(); setLeaveGuard(false); clearTimeout(S.graceTimer);
+    show(el('div', { class: 'page' }, el('h1', {}, t('lobT')), el('p', { class: 'lead' }, S.sess && S.sess.name || ''), el('div', { class: 'band ok' }, t('lobB'))));
     S.graceTimer = setTimeout(loadNext, 2000);
   }
 
@@ -218,6 +225,7 @@
     rpc('cut_camm311_quiz_next', { p_attempt: S.sess.attempt, p_token: S.sess.token }).then(function (q) {
       if (q.error === 'closed' || q.closed) { S.q = null; doneScreen(true); }
       else if (q.pending) { S.q = null; pendingScreen(); }
+      else if (q.lobby) { S.q = null; lobbyScreen(); }
       else if (q.done) { S.q = null; doneScreen(); }
       else if (q.idx === prev && q.remaining_ms <= 0) { S.graceTimer = setTimeout(loadNext, 1000); }
       else { setWatermark(S.sess.name); questionScreen(q); }
@@ -245,6 +253,13 @@
   /* ---------- start ---------- */
   function route() {
     setWatermark(S.sess && S.sess.name);
+    if (S.sess && S.info && S.info.quiz_id != null && S.sess.quiz !== S.info.quiz_id) {
+      S.sess = null; try { localStorage.removeItem(SKEY); } catch (x) {}
+    }
+    if (S.sess && !S.info) {
+      rpc('cut_camm311_quiz_info', {}).then(function (i) { S.info = i; route(); }).catch(function () { S.info = { quiz_id: S.sess.quiz }; route(); });
+      return;
+    }
     if (S.sess) {
       if (S.locked) { lockedScreen(); return; }
       if (S.q) { questionScreen(S.q); } else loadNext();

@@ -37,8 +37,10 @@ create table if not exists public.cut_camm311_quiz (
   lecturer_hash text        not null,                     -- crypt() hash, never the code itself
   lecturer_set  boolean     not null default false,       -- false until the owner runs admin_set_lecturer
   room_hash     text,                                     -- crypt() hash of the room code; null = nobody can start
-  room_set_at   timestamptz
+  room_set_at   timestamptz,
+  run_at        timestamptz                               -- set when the lecturer presses Start: until then every signed-in student waits in the lobby
 );
+alter table public.cut_camm311_quiz add column if not exists run_at timestamptz;
 
 create table if not exists public.cut_camm311_quiz_questions (
   id          serial primary key,
@@ -144,12 +146,13 @@ begin
   if not found then return false; end if;
   if not a.approved then return false; end if;     -- a device waiting for approval is never swept; its clock starts at approval
   select * into qz from public.cut_camm311_quiz where id = a.quiz_id;
+  if qz.run_at is null then return false; end if;  -- lobby: the quiz has not been started, nothing runs
   total := array_length(a.q_order, 1);
   update public.cut_camm311_quiz_answers
      set state = 'timeout', closed_at = now()
    where attempt_id = a.id and state = 'open' and now() > served_at + make_interval(secs => qz.seconds + qz.grace_seconds);
   cutoff := least(coalesce(qz.closes_at, '-infinity'),
-                  coalesce(a.approved_at, a.started_at) + make_interval(secs => total * (qz.seconds + qz.grace_seconds) + qz.slack_seconds));
+                  greatest(coalesce(a.approved_at, a.started_at), qz.run_at) + make_interval(secs => total * (qz.seconds + qz.grace_seconds) + qz.slack_seconds));
   if now() > cutoff then
     update public.cut_camm311_quiz_answers set state = 'timeout', closed_at = now() where attempt_id = a.id and state = 'open';
     insert into public.cut_camm311_quiz_answers(attempt_id, idx, question_id, opt_order, state, closed_at)
@@ -227,7 +230,7 @@ begin
   select p_quiz, false, x ->> 'stem_en', x ->> 'stem_gr', x -> 'options', (x ->> 'correct_idx')::int, nullif(x ->> 'lecture', '')::smallint
     from jsonb_array_elements(p_bank) x;
   nq := least(greatest(coalesce(p_n, 30), 1), n);
-  update public.cut_camm311_quiz set n_questions = nq, title = 'CAMM 311 Final Quiz', active = false where id = p_quiz;
+  update public.cut_camm311_quiz set n_questions = nq, title = 'CAMM 311 Final Quiz', active = false, run_at = null where id = p_quiz;
   return jsonb_build_object('loaded', n, 'n_questions', nq, 'attempts_deleted', na);
 end $$;
 
@@ -240,6 +243,7 @@ returns jsonb language sql security definer set search_path = public, pg_temp as
            'n', q.n_questions,
            'open', (q.active and now() >= coalesce(q.opens_at, 'infinity') and now() <= coalesce(q.closes_at, '-infinity')),
            'closed', (now() > coalesce(q.closes_at, '-infinity') or not q.active),
+           'running', (q.run_at is not null),
            'started', (select count(*) from public.cut_camm311_quiz_attempts a where a.quiz_id = q.id),
            'opens_at', q.opens_at, 'closes_at', q.closes_at)
          from public.cut_camm311_quiz q where q.active order by q.id desc limit 1), jsonb_build_object('quiz_id', null));
@@ -307,7 +311,7 @@ begin
   end if;
   return jsonb_build_object('attempt', a.id, 'token', a.token, 'pending', not a.approved,
     'name', s.first_name || ' ' || s.surname, 'section', s.section,
-    'n', array_length(a.q_order, 1), 'seconds', qz.seconds);
+    'n', array_length(a.q_order, 1), 'seconds', qz.seconds, 'quiz', qz.id, 'running', qz.run_at is not null);
 end $$;
 
 -- 2. next question: stem + shuffled options only. Needs: quiz active, before closes_at, before the attempt deadline, approved.
@@ -320,6 +324,7 @@ begin
   select * into qz from public.cut_camm311_quiz where id = a.quiz_id;
   if not qz.active then return jsonb_build_object('error', 'closed'); end if;
   if not a.approved then return jsonb_build_object('pending', true); end if;
+  if qz.run_at is null then return jsonb_build_object('lobby', true); end if;
   past := public.cut_camm311_quiz_sweep(a.id);
   total := array_length(a.q_order, 1);
   if past then return jsonb_build_object('done', true, 'closed', true, 'n', total); end if;
@@ -353,6 +358,7 @@ begin
   select * into qz from public.cut_camm311_quiz where id = a.quiz_id;
   if not qz.active then return jsonb_build_object('ok', false, 'reason', 'closed'); end if;
   if not a.approved then return jsonb_build_object('ok', false, 'reason', 'pending'); end if;
+  if qz.run_at is null then return jsonb_build_object('ok', false, 'reason', 'lobby'); end if;
   if public.cut_camm311_quiz_sweep(a.id) then return jsonb_build_object('ok', false, 'reason', 'closed'); end if;
   select * into w from public.cut_camm311_quiz_answers where attempt_id = a.id and idx = p_idx for update;
   if not found then return jsonb_build_object('ok', false, 'reason', 'not_served'); end if;
@@ -415,6 +421,11 @@ begin
     left join public.cut_camm311_quiz_answers w on w.attempt_id = a.id
     where a.quiz_id = qz.id group by a.id, s.id) t;
   return jsonb_build_object('title', qz.title, 'n', qz.n_questions, 'room_set', qz.room_hash is not null,
+    'run_at', qz.run_at, 'running', qz.run_at is not null,
+    'signed_up', (select count(distinct lower(e.email)) from public.cut_camm311_signups e),
+    'missing', (select coalesce(jsonb_agg(jsonb_build_object('name', m.first_name || ' ' || m.surname, 'section', m.section) order by m.first_name, m.surname), '[]'::jsonb)
+                  from (select distinct on (lower(e.email)) e.id, e.first_name, e.surname, e.section from public.cut_camm311_signups e order by lower(e.email), e.id) m
+                 where not exists (select 1 from public.cut_camm311_quiz_attempts a where a.quiz_id = qz.id and a.signup_id = m.id)),
     'closed', closed, 'scores_visible', (p_scores or closed), 'students', res,
     'alerts', jsonb_build_object(
       'pool_short', qz.n_questions > (select count(*) from public.cut_camm311_quiz_questions x where x.quiz_id = qz.id),
@@ -467,6 +478,19 @@ begin
   return jsonb_build_object('ok', true, 'approved', n);
 end $$;
 
+-- 8b. start the quiz for everyone waiting in the lobby. Sets run_at once (a second press changes nothing). Logged.
+create or replace function public.cut_camm311_quiz_begin(p_quiz int, p_code text)
+returns jsonb language plpgsql security definer set search_path = public, extensions, pg_temp as $$
+declare chk text; r timestamptz;
+begin
+  chk := public.cut_camm311_quiz_lect_ok(p_quiz, p_code);
+  if chk <> 'ok' then return jsonb_build_object('error', chk); end if;
+  update public.cut_camm311_quiz set run_at = coalesce(run_at, now()) where id = p_quiz and active returning run_at into r;
+  if r is null then return jsonb_build_object('error', 'not_active'); end if;
+  insert into public.cut_camm311_quiz_reset_log(quiz_id, action) values (p_quiz, 'begin');
+  return jsonb_build_object('ok', true, 'run_at', r);
+end $$;
+
 -- 9. clear blocks: removes the failure counters of this quiz (room guesses, unknown emails, wrong lecturer codes). Logged.
 create or replace function public.cut_camm311_quiz_clear_blocks(p_quiz int, p_code text)
 returns jsonb language plpgsql security definer set search_path = public, extensions, pg_temp as $$
@@ -501,12 +525,14 @@ revoke all on function public.cut_camm311_quiz_info(), public.cut_camm311_quiz_s
   public.cut_camm311_quiz_leave(uuid, uuid, int), public.cut_camm311_quiz_board(int, text, boolean),
   public.cut_camm311_quiz_room_regen(int, text), public.cut_camm311_quiz_reset_device(int, text, uuid),
   public.cut_camm311_quiz_approve(int, text, uuid), public.cut_camm311_quiz_clear_blocks(int, text),
+  public.cut_camm311_quiz_begin(int, text),
   public.cut_camm311_quiz_lecturer_code_change(int, text, text) from public;
 grant execute on function public.cut_camm311_quiz_info(), public.cut_camm311_quiz_start(text, int, text),
   public.cut_camm311_quiz_next(uuid, uuid), public.cut_camm311_quiz_submit(uuid, uuid, int, int),
   public.cut_camm311_quiz_leave(uuid, uuid, int), public.cut_camm311_quiz_board(int, text, boolean),
   public.cut_camm311_quiz_room_regen(int, text), public.cut_camm311_quiz_reset_device(int, text, uuid),
   public.cut_camm311_quiz_approve(int, text, uuid), public.cut_camm311_quiz_clear_blocks(int, text),
+  public.cut_camm311_quiz_begin(int, text),
   public.cut_camm311_quiz_lecturer_code_change(int, text, text) to anon, authenticated;
 
 -- ---------- DEMO seed (idempotent; inactive; no real exam content) ----------

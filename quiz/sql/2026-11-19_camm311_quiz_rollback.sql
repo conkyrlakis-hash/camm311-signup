@@ -14,6 +14,7 @@ begin
 end $guard$;
 
 drop function if exists public.cut_camm311_quiz_lecturer_code_change(int, text, text);
+drop function if exists public.cut_camm311_quiz_begin(int, text);
 drop function if exists public.cut_camm311_quiz_clear_blocks(int, text);
 drop function if exists public.cut_camm311_quiz_approve(int, text, uuid);
 drop function if exists public.cut_camm311_quiz_reset_device(int, text, uuid);
@@ -35,6 +36,6 @@ drop table if exists public.cut_camm311_quiz_fails;
 drop table if exists public.cut_camm311_quiz_answers;
 drop table if exists public.cut_camm311_quiz_attempts;
 drop table if exists public.cut_camm311_quiz_questions;
-drop table if exists public.cut_camm311_quiz;
+drop table if exists public.cut_camm311_quiz; -- the run_at column goes with it
 
 commit;

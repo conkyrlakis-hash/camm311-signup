@@ -10,6 +10,7 @@
   .proj { text-align: center; padding: 6vh 16px; }
   .proj .lab { color: var(--muted); font-size: clamp(18px, 2.6vw, 30px); }
   .proj .code { font-size: clamp(56px, 16vw, 220px); font-weight: 600; letter-spacing: .2em; color: var(--head); line-height: 1.1; margin: 2vh 0 5vh; font-variant-numeric: tabular-nums; }
+  .proj .qr { width: min(26vh, 40vw); height: auto; background: #fff; padding: 8px; border-radius: 6px; margin: 0 auto 2vh; display: block; }
   .proj .count { font-size: clamp(40px, 8vw, 110px); font-weight: 600; color: var(--blue); line-height: 1; }
 </style>
 </head>
@@ -20,6 +21,7 @@
   <div class="lang" role="group" aria-label="Language"><button type="button" data-l="en">EN</button><button type="button" data-l="gr">GR</button></div>
 </div></header>
 <main id="main" class="bwrap proj">
+  <img class="qr" id="qr" src="img/qr-quiz.png" alt="QR code to open the quiz">
   <div class="lab" id="l1"></div>
   <div class="code" id="code">------</div>
   <div class="count" id="count">0</div>
