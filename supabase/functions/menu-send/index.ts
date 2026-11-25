@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
     method: "POST",
     headers: { Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: "Constantinos Kyrlakis <noreply@proinsights.com.cy>",
+      from: "Constantinos Kyrlakis <noreply@runproops.com>",
       reply_to: "info@proinsights.com.cy",
       to: [email],
       subject,
