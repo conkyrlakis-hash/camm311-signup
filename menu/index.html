@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Menu Engineering workbook</title>
+<style>
+  :root { --bg:#f4f6f9; --card:#ffffff; --ink:#14202e; --muted:#5a6675; --line:#d6dde6; --navy:#0f2a47; --accent:#b8862d; --ok:#1d7a46; --err:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0d151f; --card:#152230; --ink:#e8eef5; --muted:#9fb0c2; --line:#2b3c50; --navy:#cfe0f2; --accent:#d9a648; --ok:#4cc38a; --err:#ff8a7a; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font: 16px/1.5 "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 28px 18px 40px; }
+  .course { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  h1 { font-size: 24px; line-height: 1.25; margin: 6px 0 4px; color: var(--navy); }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 15px; }
+  form { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 16px; }
+  label { display: grid; gap: 6px; font-weight: 600; font-size: 15px; }
+  input[type=text], input[type=email] { font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); width: 100%; }
+  input:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+  legend { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .opt { display: flex; gap: 10px; align-items: center; font-weight: 400; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .consent { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; font-size: 14px; color: var(--muted); }
+  .consent input { margin-top: 4px; }
+  button { font: inherit; font-weight: 600; padding: 14px; border: 0; border-radius: 8px; background: var(--navy); color: var(--card); cursor: pointer; }
+  button[disabled] { opacity: .6; cursor: wait; }
+  .msg { padding: 14px; border-radius: 8px; font-size: 15px; }
+  .msg.ok { border: 1px solid var(--ok); color: var(--ok); }
+  .msg.err { border: 1px solid var(--err); color: var(--err); }
+  .hp { position: absolute; left: -9999px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="course">CAMM 311 · Kitchen Management</div>
+  <h1 id="t">Get the Menu Engineering workbook</h1>
+  <p class="sub" id="s">Enter your details and the Excel file is e-mailed to you straight away.</p>
+  <form id="f" novalidate>
+    <fieldset>
+      <legend id="lg">Language of the workbook / Γλώσσα αρχείου</legend>
+      <label class="opt" for="l1"><input id="l1" type="radio" name="lang" value="en" checked> English</label>
+      <label class="opt" for="l2"><input id="l2" type="radio" name="lang" value="gr"> Ελληνικά</label>
+    </fieldset>
+    <label for="name"><span id="ln">Full name</span>
+      <input id="name" type="text" autocomplete="name" maxlength="120" required>
+    </label>
+    <label for="email">Email
+      <input id="email" type="email" autocomplete="email" maxlength="200" inputmode="email" required>
+    </label>
+    <input class="hp" type="text" id="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <label class="consent" for="consent"><input id="consent" type="checkbox" required>
+      <span id="lc">I agree my details are used only to send me this file and course material. They are deleted at the end of the semester.</span>
+    </label>
+    <button id="go" type="submit">Send me the file</button>
+    <div id="out" class="msg" hidden></div>
+  </form>
+  <footer>Lecturer: Constantinos Kyrlakis</footer>
+</main>
+<script>
+(function () {
+  var URL_ = 'https://cgiibcoeezlmehzowidg.supabase.co/functions/v1/menu-send';
+  var KEY = 'sb_publishable_kpJdz2KQoJU0t8vAYCE_4w_qr4HB0R1';
+  var TXT = {
+    en: { t: 'Get the Menu Engineering workbook', s: 'Enter your details and the Excel file is e-mailed to you straight away.', ln: 'Full name', lc: 'I agree my details are used only to send me this file and course material. They are deleted at the end of the semester.', go: 'Send me the file',
+      eName: 'Please enter your name.', eMail: 'Please check your email address.', eCons: 'Please tick the consent box.', ok: 'Done! The file is on its way to ', eLim: 'This address has already received the file 3 times.', eFail: 'Not sent. Please try again.' },
+    gr: { t: 'Λάβε το αρχείο Menu Engineering', s: 'Συμπλήρωσε τα στοιχεία σου και το αρχείο Excel στέλνεται αμέσως στο email σου.', ln: 'Ονοματεπώνυμο', lc: 'Συμφωνώ τα στοιχεία μου να χρησιμοποιηθούν μόνο για την αποστολή αυτού του αρχείου και υλικού του μαθήματος. Διαγράφονται στο τέλος του εξαμήνου.', go: 'Στείλε μου το αρχείο',
+      eName: 'Συμπλήρωσε το όνομά σου.', eMail: 'Έλεγξε το email σου.', eCons: 'Χρειάζεται η συγκατάθεσή σου.', ok: 'Έτοιμο! Το αρχείο στάλθηκε στο ', eLim: 'Αυτή η διεύθυνση έχει ήδη λάβει το αρχείο 3 φορές.', eFail: 'Δεν στάλθηκε. Δοκίμασε ξανά.' }
+  };
+  var f = document.getElementById('f'), out = document.getElementById('out'), go = document.getElementById('go');
+  function lang() { return f.querySelector('input[name=lang]:checked').value; }
+  function apply() {
+    var x = TXT[lang()];
+    document.documentElement.lang = lang() === 'gr' ? 'el' : 'en';
+    ['t', 's', 'ln', 'lc'].forEach(function (k) { document.getElementById(k).textContent = x[k]; });
+    go.textContent = x.go;
+  }
+  f.querySelectorAll('input[name=lang]').forEach(function (r) { r.addEventListener('change', apply); });
+  function show(ok, text) { out.hidden = false; out.className = 'msg ' + (ok ? 'ok' : 'err'); out.textContent = text; }
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var x = TXT[lang()], nm = f.querySelector('#name').value.trim(), em = f.querySelector('#email').value.trim();
+    if (!nm) return show(false, x.eName);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return show(false, x.eMail);
+    if (!document.getElementById('consent').checked) return show(false, x.eCons);
+    go.disabled = true;
+    fetch(URL_, { method: 'POST', headers: { 'apikey': KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: nm, email: em, lang: lang(), consent: true, website: document.getElementById('website').value }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { r: r, j: j }; }); })
+      .then(function (o) {
+        if (o.r.status === 429 && o.j.error === 'limit') { go.disabled = false; return show(false, x.eLim); }
+        if (!o.r.ok) throw new Error(o.r.status);
+        f.querySelectorAll('input, button').forEach(function (el) { el.disabled = true; });
+        show(true, x.ok + em);
+      })
+      .catch(function () { go.disabled = false; show(false, x.eFail); });
+  });
+})();
+</script>
+</body>
+</html>
