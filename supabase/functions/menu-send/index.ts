@@ -42,15 +42,15 @@ Deno.serve(async (req) => {
   const first = esc(name.split(/\s+/)[0]);
   const subject = gr ? "Menu Engineering: το αρχείο Excel του μαθήματος" : "Menu Engineering: your course Excel workbook";
   const html = gr
-    ? `<p>Γεια σου ${first},</p><p>Συνημμένο το αρχείο Excel για το Menu Engineering που είδαμε στο μάθημα. Τα ονόματα των πιάτων είναι στα αγγλικά, όλα τα υπόλοιπα στα ελληνικά.</p><p>Οι ομάδες: <b>Αστέρι</b> (υψηλή δημοφιλία, υψηλό κέρδος), <b>Άλογο Έλξης</b> (υψηλή δημοφιλία, χαμηλό κέρδος), <b>Αίνιγμα</b> (χαμηλή δημοφιλία, υψηλό κέρδος), <b>Σκύλος</b> (χαμηλά και τα δύο).</p><p>Κωνσταντίνος Κυρλάκης<br>CAMM 311</p>`
-    : `<p>Hello ${first},</p><p>Attached is the Menu Engineering Excel workbook we used in class. Dish names and all labels are in English.</p><p>The groups: <b>Star</b> (high popularity, high profit), <b>Plow-horse</b> (high popularity, low profit), <b>Puzzle</b> (low popularity, high profit), <b>Dog</b> (low on both).</p><p>Constantinos Kyrlakis<br>CAMM 311</p>`;
+    ? `<p>Γεια σου ${first},</p><p>Συνημμένο θα βρεις το Menu Engineering που είδαμε σήμερα στο μάθημα.</p><p>Αν έχεις οποιαδήποτε απορία, επικοινώνησε μαζί μου στο k.kyrlakis@cut.ac.cy.</p><p>Κωνσταντίνος Κυρλάκης</p>`
+    : `<p>Hello ${first},</p><p>Attached is the Menu Engineering workbook we saw in class today.</p><p>If you have any questions, please contact me at k.kyrlakis@cut.ac.cy.</p><p>Constantinos Kyrlakis</p>`;
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: "Constantinos Kyrlakis <noreply@runproops.com>",
-      reply_to: "info@proinsights.com.cy",
+      reply_to: "k.kyrlakis@cut.ac.cy",
       to: [email],
       subject,
       html,
