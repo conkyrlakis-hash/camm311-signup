@@ -104,6 +104,53 @@ with sync_playwright() as p:
     pg.click('button.btn.block'); pg.wait_for_selector('h1:has-text("ολοκληρώθηκε")')
     check(True, 'finished screen in Greek')
     ctx.close()
+    # ---------- calculator on maths questions ----------
+    state.update(i=0, log=[], bodies=[])
+    saved = list(QS)
+    QS[:] = [
+        {'idx': 0, 'n': 2, 'stem_en': 'A portion costs €3.00 and the food cost target is 30%. What is the menu price by the percentage method?',
+         'stem_gr': 'Μια μερίδα κοστίζει €3.00 και ο στόχος κόστους είναι 30%. Ποια είναι η τιμή;',
+         'options': [{'en': '€9.00', 'gr': '€9.00'}, {'en': '€10.00', 'gr': '€10.00'}], 'remaining_ms': 30000, 'done': False},
+        {'idx': 1, 'n': 2, 'stem_en': 'DEMO: no maths here.', 'stem_gr': 'DEMO: χωρίς πράξεις.',
+         'options': [{'en': 'Yes', 'gr': 'Ναι'}, {'en': 'No', 'gr': 'Όχι'}], 'remaining_ms': 30000, 'done': False},
+    ]
+    ctx = b.new_context(viewport={'width': 360, 'height': 640}, device_scale_factor=2, locale='en')
+    ctx.route('**/rest/v1/rpc/**', handler)
+    cp = ctx.new_page(); cp.goto(BASE + 'index.html'); cp.wait_for_selector('#email')
+    cp.fill('#email', 'anna@test.example'); cp.fill('#room', 'K7M2QX'); cp.click('button[type=submit]'); cp.wait_for_selector('.calc-open')
+    cp.screenshot(path=f'{SHOTS}/8_maths_question_360.png')
+    def keys(s):
+        for k in s: cp.click(f'.calc-key[data-k="{k}"]')
+        return cp.inner_text('.calc-screen')
+    url = cp.url
+    cp.click('.calc-open'); cp.wait_for_selector('.calc')
+    check(keys('3÷30%=') == '10', 'calc: 3 ÷ 30% = 10')
+    check(keys('2+3×4=') == '14', 'calc: multiply before add')
+    check(keys('C200+10%=') == '220', 'calc: 200 + 10% = 220')
+    check(keys('C8000+22000−7000=') == '23000', 'calc: 8000 + 22000 - 7000 = 23000')
+    check(keys('C5÷0=') == 'Error', 'calc: divide by zero shows Error')
+    check(keys('C0.1+0.2=') == '0.3', 'calc: no float noise')
+    check(cp.evaluate("document.querySelector('.calc-back').getBoundingClientRect().bottom <= innerHeight + 1 && document.documentElement.scrollWidth <= 360"), 'calc: fits 360 x 640 with Back visible')
+    cp.screenshot(path=f'{SHOTS}/9_calculator_360.png')
+    cp.click('.calc-back'); cp.wait_for_function("!document.querySelector('.calc') && !(history.state && history.state.calc)")
+    check(cp.locator('.opt').count() == 2 and cp.url == url, 'calc: Back returns to the same question')
+    cp.click('.calc-open'); cp.wait_for_selector('.calc')
+    check(cp.inner_text('.calc-screen') == '0.3', 'calc: keeps the number when reopened')
+    cp.go_back(); cp.wait_for_function("!document.querySelector('.calc')")
+    check(cp.locator('.opt').count() == 2 and cp.url == url and cp.locator('.locked').count() == 0, "calc: phone back button closes it and stays on the question")
+    check('cut_camm311_quiz_leave' not in state['log'], 'calc: never reports leave')
+    cp.click('.calc-open'); cp.wait_for_selector('.calc'); cp.evaluate(HIDE); cp.wait_for_selector('.locked')
+    check(cp.locator('.calc').count() == 0 and 'cut_camm311_quiz_leave' in state['log'], 'calc: leaving the app still locks, calculator goes')
+    cp.evaluate("Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true})")
+    cp.click('.locked ~ p button, .page > p button'); cp.wait_for_selector('.stem:has-text("no maths")')
+    check(cp.locator('.calc-open').count() == 0, 'calc: no button on a question without maths')
+    # time runs out while the calculator is open
+    state.update(i=0, log=[], bodies=[]); QS[0] = dict(QS[0], remaining_ms=2500)
+    cp.reload(); cp.wait_for_selector('.calc-open'); cp.click('.calc-open'); cp.wait_for_selector('.calc')
+    cp.wait_for_selector('.calc', state='detached', timeout=5000)
+    check('Time is up' in cp.inner_text('#qstatus') and cp.locator('.calc-open').is_disabled(), 'calc: time up closes it')
+    ctx.close()
+    QS[:] = saved
     # ---------- lecturer board at 1280 ----------
     ctx = b.new_context(viewport={'width': 1280, 'height': 760}, locale='en')
     ctx.route('**/rest/v1/rpc/**', handler)
