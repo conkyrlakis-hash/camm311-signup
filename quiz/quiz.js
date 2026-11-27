@@ -16,8 +16,9 @@
       later: 'Too many tries. Wait a few minutes.',
       noServer: 'No connection. Try again.',
       noQuiz: 'No quiz is open right now.', closedNote: 'The quiz is not open. Wait for the lecturer.',
-      rules: 'One question at a time, 30 seconds each. No going back. Do not leave this screen: leaving locks the question.',
+      rules: 'One question at a time, 60 seconds each. No going back. Do not leave this screen: leaving locks the question.',
       qOf: function (a, b) { return 'Question ' + a + ' of ' + b; }, sec: 's',
+      calc: 'Calculator', calcBack: 'Back to question', calcErr: 'Error',
       sending: 'Saving...', saved: 'Answer saved.', timeUp: 'Time is up.',
       lockedT: 'Question locked', lockedB: 'You left the app during this question. It is locked and the lecturer can see it.',
       cont: 'Next question', doneT: 'Quiz finished', doneB: 'Your answers are saved. You can close this page.',
@@ -34,8 +35,9 @@
       later: 'Πολλές προσπάθειες. Περιμένετε λίγα λεπτά.',
       noServer: 'Δεν υπάρχει σύνδεση. Δοκιμάστε ξανά.',
       noQuiz: 'Δεν υπάρχει ανοιχτό κουίζ αυτή τη στιγμή.', closedNote: 'Το κουίζ δεν είναι ανοιχτό. Περιμένετε τον διδάσκοντα.',
-      rules: 'Μία ερώτηση τη φορά, 30 δευτερόλεπτα η καθεμία. Δεν επιστρέφετε πίσω. Μην φύγετε από αυτή την οθόνη: η έξοδος κλειδώνει την ερώτηση.',
+      rules: 'Μία ερώτηση τη φορά, 60 δευτερόλεπτα η καθεμία. Δεν επιστρέφετε πίσω. Μην φύγετε από αυτή την οθόνη: η έξοδος κλειδώνει την ερώτηση.',
       qOf: function (a, b) { return 'Ερώτηση ' + a + ' από ' + b; }, sec: 'δ',
+      calc: 'Αριθμομηχανή', calcBack: 'Πίσω στην ερώτηση', calcErr: 'Σφάλμα',
       sending: 'Αποθήκευση...', saved: 'Η απάντηση αποθηκεύτηκε.', timeUp: 'Ο χρόνος τελείωσε.',
       lockedT: 'Η ερώτηση κλειδώθηκε', lockedB: 'Φύγατε από την εφαρμογή κατά τη διάρκεια της ερώτησης. Κλειδώθηκε και ο διδάσκων το βλέπει.',
       cont: 'Επόμενη ερώτηση', doneT: 'Το κουίζ ολοκληρώθηκε', doneB: 'Οι απαντήσεις σας αποθηκεύτηκαν. Μπορείτε να κλείσετε τη σελίδα.',
@@ -64,7 +66,105 @@
     }
     return n;
   }
-  function show(node) { main.textContent = ''; main.appendChild(node); }
+  function show(node) { closeCalc(); main.textContent = ''; main.appendChild(node); }
+
+  /* ---------- calculator: inside the page, so the student never leaves the question ---------- */
+  var calcNode = null, calcTimer = null;
+  function hasMaths(q) {
+    var s = q.stem_en || '';
+    if (/Regulation/.test(s)) return false;
+    var numbers = /€|%|\d{1,2}:\d{2}/.test(s) || (s.match(/\d+(?:[.,]\d+)?/g) || []).length >= 2;
+    return numbers && (/€/.test(s) || q.options.some(function (o) { return /\d/.test(o.en); }));
+  }
+  /* own parser, no eval: x and / before + and -; after + or -, "n%" means n percent of the total so far */
+  function calculate(expr) {
+    var parts = expr.match(/\d*\.?\d+%?|\d+\.%?|[+−×÷]/g) || [];
+    if (parts.join('') !== expr) return null;
+    var i = 0;
+    function value() {
+      var sign = 1;
+      while (parts[i] === '−') { sign = -sign; i++; }
+      var p = parts[i++];
+      if (p == null || /^[+×÷]$/.test(p)) return null;
+      var pct = p.slice(-1) === '%';
+      return { v: sign * Number(pct ? p.slice(0, -1) : p), pct: pct };
+    }
+    function term() {
+      var a = value(); if (!a) return null;
+      var v = a.pct ? a.v / 100 : a.v, lonePct = a.pct ? a.v : null;
+      while (parts[i] === '×' || parts[i] === '÷') {
+        var op = parts[i++], b = value(); if (!b) return null;
+        var n = b.pct ? b.v / 100 : b.v;
+        v = op === '×' ? v * n : v / n; lonePct = null;
+      }
+      return { v: v, lonePct: lonePct };
+    }
+    var first = term(); if (!first) return null;
+    var total = first.v;
+    while (i < parts.length) {
+      var op = parts[i++]; if (op !== '+' && op !== '−') return null;
+      var next = term(); if (!next) return null;
+      var add = next.lonePct != null ? total * next.lonePct / 100 : next.v;
+      total = op === '+' ? total + add : total - add;
+    }
+    if (!isFinite(total) || Math.abs(total) >= 1e15) return null;
+    var r = Math.round(total * 1e6) / 1e6;
+    return String(r).replace('-', '−');
+  }
+  function openCalc(q) {
+    if (calcNode || S.busy) return;
+    var done = false;
+    var screen = el('output', { class: 'calc-screen', 'aria-live': 'polite' }, '');
+    var expr = q._calc || '';
+    function paint(text) { screen.textContent = text != null ? text : (expr || '0'); }
+    function press(k) {
+      if (k === 'C') { expr = ''; done = false; }
+      else if (k === '⌫') { expr = expr.slice(0, -1); done = false; }
+      else if (k === '=') {
+        if (!expr) return;
+        var r = calculate(expr);
+        if (r == null) { paint(t('calcErr')); return; }
+        expr = r; done = true;
+      } else {
+        if (done && /[\d.]/.test(k)) expr = '';
+        done = false;
+        if (/[+×÷]/.test(k) && /[+−×÷]$/.test(expr)) expr = expr.replace(/[+−×÷]+$/, '');
+        if (k === '−' && /[+−]$/.test(expr)) expr = expr.slice(0, -1);
+        if (/[+×÷%]/.test(k) && !expr) return;
+        if (k === '%' && !/[\d.]$/.test(expr)) return;
+        if (k === '.' && /\.\d*$/.test(expr)) return;
+        if (/[\d.]/.test(k) && /%$/.test(expr)) return;
+        if (expr.length < 40) expr += k;
+      }
+      q._calc = expr; paint();
+    }
+    var keys = el('div', { class: 'calc-keys' });
+    ['C', '⌫', '%', '÷', '7', '8', '9', '×', '4', '5', '6', '−', '1', '2', '3', '+', '0', '.', '='].forEach(function (k) {
+      var cls = 'calc-key' + (k === '0' ? ' wide' : '') + (/[\d.]/.test(k) ? '' : k === '=' ? ' eq' : ' fn');
+      keys.appendChild(el('button', { class: cls, type: 'button', 'data-k': k, onclick: function () { press(k); } }, k));
+    });
+    calcTimer = el('span', { class: 'timer' }, '');
+    calcNode = el('div', { class: 'calc', role: 'dialog', 'aria-label': t('calc') },
+      el('div', { class: 'calc-in' },
+        el('div', { class: 'qmeta' }, el('span', {}, t('calc')), calcTimer),
+        el('p', { class: 'calc-stem' }, S.lang === 'en' ? q.stem_en : q.stem_gr),
+        screen, keys,
+        el('button', { class: 'btn block calc-back', type: 'button', onclick: function () { closeCalc(); } }, t('calcBack'))));
+    paint();
+    main.querySelector('.page').appendChild(calcNode);
+    /* the phone's own back button must close the calculator, not leave the page (leaving locks the question) */
+    if (!(history.state && history.state.calc)) history.pushState({ calc: 1 }, '');
+    tickView(Math.max(0, deadline - performance.now()));
+  }
+  function removeCalc() {
+    if (!calcNode) return false;
+    if (calcNode.parentNode) calcNode.parentNode.removeChild(calcNode);
+    calcNode = null; calcTimer = null; return true;
+  }
+  function closeCalc() {
+    if (removeCalc() && document.visibilityState !== 'hidden' && history.state && history.state.calc) history.back();
+  }
+  window.addEventListener('popstate', removeCalc);
 
   function rpc(fn, body, keepalive) {
     return fetch(CFG.url + '/rest/v1/rpc/' + fn, {
@@ -175,19 +275,27 @@
       el('div', { class: 'qmeta' }, el('span', {}, t('qOf')(q.idx + 1, q.n)), timerNode),
       trackNode,
       el('h1', { class: 'stem' }, en ? q.stem_en : q.stem_gr),
+      hasMaths(q) ? el('button', { class: 'btn ghost small calc-open', type: 'button', onclick: function () { openCalc(q); } }, t('calc')) : null,
       list, status));
     if (q._dl == null) q._dl = performance.now() + q.remaining_ms;
     deadline = q._dl;
+    total = Math.max((S.info && S.info.seconds * 1000) || 60000, q.remaining_ms);
     setLeaveGuard(true);
     startTick();
+  }
+
+  function tickView(left) {
+    [timerNode, calcTimer].forEach(function (n) {
+      if (n) { n.textContent = Math.ceil(left / 1000) + t('sec'); n.className = 'timer' + (left < 8000 ? ' low' : ''); }
+    });
+    if (trackNode) { trackNode.firstChild.style.transform = 'scaleX(' + (left / total).toFixed(3) + ')'; trackNode.className = 'track' + (left < 8000 ? ' low' : ''); }
   }
 
   function startTick() {
     stopTick();
     var run = function () {
       var left = Math.max(0, deadline - performance.now());
-      if (timerNode) { timerNode.textContent = Math.ceil(left / 1000) + t('sec'); timerNode.className = 'timer' + (left < 8000 ? ' low' : ''); }
-      if (trackNode) { trackNode.firstChild.style.transform = 'scaleX(' + (left / 30000).toFixed(3) + ')'; trackNode.className = 'track' + (left < 8000 ? ' low' : ''); }
+      tickView(left);
       if (left <= 0) { stopTick(); timeUp(); }
     };
     run(); S.tick = setInterval(run, 200);
@@ -212,7 +320,8 @@
 
   function timeUp() {
     if (!S.q) return;
-    lockOptions(); say(t('timeUp')); setLeaveGuard(false);
+    closeCalc(); lockOptions(); say(t('timeUp')); setLeaveGuard(false);
+    var cb = main.querySelector('.calc-open'); if (cb) cb.disabled = true;
     // the server accepts a short grace; wait it out, then ask for the next question
     clearTimeout(S.graceTimer);
     S.graceTimer = setTimeout(function () { if (!S.busy) loadNext(); }, 3600);

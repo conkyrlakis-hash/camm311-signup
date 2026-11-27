@@ -15,7 +15,7 @@
       student: 'Student', section: 'Section', progress: 'Progress', correct: 'Correct', status: 'Status', action: 'Action',
       sLeft: function (n) { return 'Left app x' + n; }, sDup: 'Second start blocked', sReset: 'Reset waiting', sPend: 'Waiting for approval', sDone: 'Finished', sRun: 'In progress', sTime: function (n) { return 'Timeouts ' + n; },
       rollT: function (a, b) { return 'Signed in: ' + a + ' of ' + b + ' signed up'; }, missingT: 'Not signed in yet', allIn: 'Everyone who signed up is in.',
-      startQ: 'Start quiz', startConfirm: function (n) { return 'Start the quiz now for ' + n + ' signed-in students? Their 30-second questions begin at once.'; }, runningT: function (h) { return 'Quiz running since ' + h; }, lobbyT: 'Waiting room: students see a wait screen until you press Start.',
+      startQ: 'Start quiz', startConfirm: function (n) { return 'Start the quiz now for ' + n + ' signed-in students? Their 60-second questions begin at once.'; }, runningT: function (h) { return 'Quiz running since ' + h; }, lobbyT: 'Waiting room: students see a wait screen until you press Start.',
       reset: 'Reset device', confirm: 'Reset the device for ', students: 'students', none: 'No one has started yet.'
     },
     gr: {
@@ -29,7 +29,7 @@
       student: 'Φοιτητής', section: 'Τμήμα', progress: 'Πρόοδος', correct: 'Σωστές', status: 'Κατάσταση', action: 'Ενέργεια',
       sLeft: function (n) { return 'Έφυγε από εφαρμογή x' + n; }, sDup: 'Αποκλείστηκε δεύτερη εκκίνηση', sReset: 'Αναμονή επαναφοράς', sPend: 'Αναμονή έγκρισης', sDone: 'Ολοκληρώθηκε', sRun: 'Σε εξέλιξη', sTime: function (n) { return 'Εκπρόθεσμες ' + n; },
       rollT: function (a, b) { return 'Συνδεδεμένοι: ' + a + ' από ' + b + ' εγγεγραμμένους'; }, missingT: 'Δεν έχουν συνδεθεί ακόμη', allIn: 'Όλοι οι εγγεγραμμένοι έχουν συνδεθεί.',
-      startQ: 'Έναρξη κουίζ', startConfirm: function (n) { return 'Έναρξη του κουίζ τώρα για ' + n + ' συνδεδεμένους φοιτητές; Οι ερωτήσεις των 30 δευτερολέπτων ξεκινούν αμέσως.'; }, runningT: function (h) { return 'Το κουίζ τρέχει από ' + h; }, lobbyT: 'Αίθουσα αναμονής: οι φοιτητές βλέπουν οθόνη αναμονής μέχρι να πατήσετε Έναρξη.',
+      startQ: 'Έναρξη κουίζ', startConfirm: function (n) { return 'Έναρξη του κουίζ τώρα για ' + n + ' συνδεδεμένους φοιτητές; Οι ερωτήσεις των 60 δευτερολέπτων ξεκινούν αμέσως.'; }, runningT: function (h) { return 'Το κουίζ τρέχει από ' + h; }, lobbyT: 'Αίθουσα αναμονής: οι φοιτητές βλέπουν οθόνη αναμονής μέχρι να πατήσετε Έναρξη.',
       reset: 'Επαναφορά συσκευής', confirm: 'Επαναφορά συσκευής για ', students: 'φοιτητές', none: 'Κανείς δεν έχει ξεκινήσει ακόμη.'
     }
   };
